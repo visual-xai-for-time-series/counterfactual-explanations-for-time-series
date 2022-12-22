@@ -10,7 +10,9 @@ Further information can be obtained here:
 https://christophm.github.io/interpretable-ml-book/counterfactual.html
 
 ```
-Wachter, S., Mittelstadt, B., & Russell, C. (2017). Counterfactual explanations without opening the black box: Automated decisions and the GDPR. Harv. JL & Tech., 31, 841.
+Wachter, S., Mittelstadt, B., & Russell, C. (2017).
+Counterfactual explanations without opening the black box: Automated decisions and the GDPR.
+Harv. JL & Tech., 31, 841.
 ```
 
 ## Native-Guide
@@ -20,7 +22,9 @@ Further information can be obtained here:
 https://github.com/e-delaney/Instance-Based_CFE_TSC
 
 ```
-Delaney, E., Greene, D., & Keane, M. T. (2021, September). Instance-based counterfactual explanations for time series classification. In International Conference on Case-Based Reasoning (pp. 32-47). Springer, Cham.
+Delaney, E., Greene, D., & Keane, M. T. (2021, September).
+Instance-based counterfactual explanations for time series classification.
+In International Conference on Case-Based Reasoning (pp. 32-47). Springer, Cham.
 ```
 
 ## Comte
@@ -28,7 +32,9 @@ Delaney, E., Greene, D., & Keane, M. T. (2021, September). Instance-based counte
 https://github.com/peaclab/CoMTE
 
 ```
-Ates, E., Aksar, B., Leung, V. J., & Coskun, A. K. (2021, May). Counterfactual Explanations for Multivariate Time Series. In 2021 International Conference on Applied Artificial Intelligence (ICAPAI) (pp. 1-8). IEEE.
+Ates, E., Aksar, B., Leung, V. J., & Coskun, A. K. (2021, May).
+Counterfactual Explanations for Multivariate Time Series.
+In 2021 International Conference on Applied Artificial Intelligence (ICAPAI) (pp. 1-8). IEEE.
 ```
 
 ## Testing
