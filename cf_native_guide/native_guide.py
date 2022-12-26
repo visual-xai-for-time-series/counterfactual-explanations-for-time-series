@@ -38,7 +38,7 @@ def numpy_to_torch(data, device):
 # proximal, sparse and diverse explanations that are better than those produced 
 # by key benchmark counterfactual methods.
 #
-###
+####
 def native_guide_uni_cf(sample, dataset, model, weight_function=GradientShap, iterate=None, sub_len=1):
     
     device = next(model.parameters()).device
@@ -54,8 +54,8 @@ def native_guide_uni_cf(sample, dataset, model, weight_function=GradientShap, it
         iterate = shape[1]
     
     # get predictions for the sample and the dataset
-    predictions_for_data = np.around(model_predict(time_series_data.reshape(-1, *shape)))
-    predictions_for_sample = np.around(model_predict(sample.reshape(1, *shape)))
+    predictions_for_data = model_predict(time_series_data.reshape(-1, *shape))
+    predictions_for_sample = model_predict(sample.reshape(1, *shape))
     label_data = np.argmax(predictions_for_data, axis=1)
     label_sample = np.argmax(predictions_for_sample)
     
@@ -103,9 +103,9 @@ def native_guide_uni_cf(sample, dataset, model, weight_function=GradientShap, it
         starting_idc = find_most_influential_array(i+sub_len)
         cf[starting_idc:starting_idc+(i+sub_len)] = native_guide[starting_idc:starting_idc+(i+sub_len)]
 
-        output = np.around(model_predict(cf.reshape(1, *shape))).reshape(-1)
-        if cf_label == np.argmax(output):
+        y_cf = model_predict(cf.reshape(1, *shape)).reshape(-1)
+        if cf_label == np.argmax(y_cf):
             break
 
-    return cf, output
+    return cf, y_cf
 

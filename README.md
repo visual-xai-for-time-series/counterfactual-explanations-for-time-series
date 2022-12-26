@@ -5,7 +5,7 @@ Implementations are with Pytorch and Captum.
 
 ## Wachter et al.
 
-Our base implementations can be found at `cf_wachter`.  
+The base implementations can be found at `cf_wachter`.  
 Further information can be obtained here:  
 https://christophm.github.io/interpretable-ml-book/counterfactual.html
 
@@ -15,9 +15,17 @@ Counterfactual explanations without opening the black box: Automated decisions a
 Harv. JL & Tech., 31, 841.
 ```
 
+Some considerations:  
+There are two variants of this approach (genetic and gradient).  
+The genetic variant uses the sensitivity of the model towards changes on the input to identify the best change for the counterfactual.  
+The optimization variant incorporates the gradient of the model to modify the input to generate the counterfactual.
+
+A better fitting model on the training data needs more time (steps) to generate a counterfactual using the genetic variant.
+If possible use the optimization variant.
+
 ## Native-Guide
 
-Our base implementations can be found at `cf_native_guide`.  
+The base implementations can be found at `cf_native_guide`.  
 Further information can be obtained here:  
 https://github.com/e-delaney/Instance-Based_CFE_TSC
 
@@ -40,7 +48,12 @@ In 2021 International Conference on Applied Artificial Intelligence (ICAPAI) (pp
 ## Testing
 
 The implementations can be tested with the `test.py` script in the `utils` folder.  
-It will use the UCR FordA dataset as a default.
+It will use the UCR FordA dataset as a default for training.  
+The model is a small scale convolution neural network with 1D convolutions.  
+A random sample from the test data is used as base for the counterfactual explanations.
+
+An example:  
+![FordA Counterfactual Explanations](counterfactuals.png)
 
 ## License
 

@@ -16,6 +16,11 @@ class UCRDataset(Dataset):
         self.name = name
         self.mapping = mapping
         
+        self.min = np.amin(X, axis=0)
+        self.max = np.amax(X, axis=0)
+        
+        self.std = np.std(X, axis=0)
+        
     def __repr__(self):
         # Return a string representation of the UCRDataset instance, including its name and shape
         return f'<UCRDataset {self.name} {self.X.shape}>'
