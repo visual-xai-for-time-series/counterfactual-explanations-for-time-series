@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "time-series-counterfactual"
+version = "0.1.0"
+description = "Counterfactual explanation algorithms for time-series models (Wachter, Native-Guide, etc.)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+
+authors = [
+  { name = "Udo Schlegel" }
+]
+
+keywords = ["counterfactual", "explainability", "xai", "time series"]
+
+# Keep dependencies lean; users can add GPU/CPU-specific torch builds.
+dependencies = [
+  "numpy>=1.22",
+  "scipy>=1.8",
+  "scikit-learn>=1.1",
+  "matplotlib>=3.5",
+  "torch>=1.12",
+  "captum>=0.6",
+  "tqdm>=4.64",
+]
+
+[project.urls]
+Homepage = "https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series"
+Repository = "https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series"
+Issues = "https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cfts*"]
