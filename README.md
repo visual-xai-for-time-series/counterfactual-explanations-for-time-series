@@ -1,27 +1,29 @@
 # Counterfactual Explanation Algorithms for Time Series Models
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 A comprehensive collection of counterfactual explanation algorithms for time series classification with PyTorch implementations. This library provides state-of-the-art methods for generating and evaluating counterfactual explanations, helping to understand and interpret deep learning models for time series data.
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [🚀 Quick Start](#quick-start)
-- [🧠 Implemented Algorithms](#implemented-algorithms)
-- [📊 Comprehensive Evaluation Metrics](#comprehensive-evaluation-metrics)
-- [🎯 Examples and Datasets](#examples-and-datasets)
-- [🖼️ Visualization Examples](#visualization-examples)
-- [🛠️ Installation](#installation)
-- [🔧 Usage](#usage)
-- [🎯 Key Features](#key-features)
-- [📁 Project Structure](#project-structure)
-- [🤝 Contributing](#contributing)
-- [📚 References and Citations](#references-and-citations)
+- [Quick Start](#quick-start)
+- [Implemented Algorithms](#implemented-algorithms)
+- [Comprehensive Evaluation Metrics](#comprehensive-evaluation-metrics)
+- [Examples and Datasets](#examples-and-datasets)
+- [Visualization Examples](#visualization-examples)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Key Features](#key-features)
+- [Project Structure](#project-structure)
+- [License](#license)
+- [References and Citations](#references-and-citations)
+- [Disclaimer](#disclaimer)
+- [Acknowledgments](#acknowledgments)
 
-## � Quick Start
+## Quick Start
 
 ```bash
 # Install dependencies
@@ -36,9 +38,10 @@ python example_forda.py          # FordA dataset
 python example_vibration.py      # Synthetic vibration data
 python example_arabicdigits.py   # Multi-channel Arabic digits
 python metrics_evaluation_example.py  # Comprehensive metrics
+python mahalanobis_example.py    # Mahalanobis distance examples
 ```
 
-## 🧠 Implemented Algorithms
+## Implemented Algorithms
 
 ### 1. **Wachter et al.** (`cf_wachter`)
 Classic counterfactual explanation method with two optimization variants.
@@ -127,7 +130,7 @@ Advanced counterfactual generation with enhanced realism constraints.
 
 **Implementation:** `cfts/cf_glacier/`
 
-## 📊 Comprehensive Evaluation Metrics
+## Comprehensive Evaluation Metrics
 
 The library includes a complete suite of metrics for evaluating counterfactual quality across six key dimensions:
 
@@ -167,7 +170,7 @@ The library includes a complete suite of metrics for evaluating counterfactual q
 - `input_stability`: Robustness to input perturbations
 - `hyperparameter_sensitivity`: Parameter stability analysis
 
-## 🎯 Examples and Datasets
+## Examples and Datasets
 
 ### Available Examples
 - **`example_forda.py`**: FordA automotive dataset (UCR Archive)
@@ -185,7 +188,7 @@ The library includes a complete suite of metrics for evaluating counterfactual q
 - `cnn_multi_arabicdigits_10ch.pth`: Multi-class, multi-channel
 - `tiny1dcnn_vibration_6.pth`: Vibration fault classification
 
-## 🖼️ Visualization Examples
+## Visualization Examples
 
 The library generates publication-ready visualizations:
 
@@ -198,14 +201,15 @@ The library generates publication-ready visualizations:
 ![Vibration Counterfactual Explanations](counterfactuals_vibration.png)
 *Synthetic vibration data counterfactual explanations*
 
-## 🛠️ Installation
+## Installation
 
 ### Requirements
-- Python 3.8+
+- Python 3.9+
 - PyTorch 2.0+
 - NumPy, SciPy, Matplotlib
 - Scikit-learn
 - Captum (for attribution methods)
+- Optional: dtaidistance (for DTW distance metric)
 
 ### Setup
 ```bash
@@ -218,9 +222,14 @@ pip install -r requirements.txt
 
 # Optional: Install in development mode
 pip install -e .
+
+# Optional: Install with additional features
+pip install -e ".[dtw]"        # DTW distance metric support
+pip install -e ".[examples]"   # Dependencies for running examples
+pip install -e ".[all]"        # All optional dependencies
 ```
 
-## 🔧 Usage
+## Usage
 
 ### Basic Usage
 ```python
@@ -260,18 +269,18 @@ python examples/run_all.py
 python examples/demo_run_all.py
 ```
 
-## 🎯 Key Features
+## Key Features
 
-- **🔬 Research-Ready**: Implementations of state-of-the-art algorithms
-- **📈 Comprehensive Metrics**: Six categories of evaluation measures
-- **🎨 Rich Visualizations**: Publication-quality plots and comparisons
-- **🚀 Easy Integration**: Simple API for custom models and datasets
-- **⚡ Efficient**: Optimized implementations with GPU support
-- **📚 Well-Documented**: Extensive examples and documentation
-- **🔄 Reproducible**: Seed control and deterministic results
-- **🛡️ Robust**: Error handling and input validation
+- **Research-Ready**: Implementations of state-of-the-art algorithms
+- **Comprehensive Metrics**: Six categories of evaluation measures
+- **Rich Visualizations**: Publication-quality plots and comparisons
+- **Easy Integration**: Simple API for custom models and datasets
+- **Efficient**: Optimized implementations with GPU support
+- **Well-Documented**: Extensive examples and documentation
+- **Reproducible**: Seed control and deterministic results
+- **Robust**: Error handling and input validation
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 counterfactual-explanations-for-time-series/
@@ -303,29 +312,20 @@ counterfactual-explanations-for-time-series/
 
 Released under MIT License. See the LICENSE file for details.
 
-## 📚 References and Citations
+## References and Citations
 
 ### Core Library Citation
 ```bibtex
-@software{cf-ts-us-2022,
+@software{cfts-us-2025,
   author = {Schlegel, Udo},
   title = {Counterfactual Explanation Algorithms for Time Series Models},
   url = {https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series},
-  version = {2.0.0},
-  year = {2024}
+  version = {0.1.0},
+  year = {2025}
 }
 ```
 
 ### Additional References
-
-**SETS Algorithm:**
-```bibtex
-@article{sets2024,
-  title={Scalable Explanation for Time Series Classification},
-  journal={arXiv preprint arXiv:2024.xxxxx},
-  year={2024}
-}
-```
 
 **MOC Algorithm (Dandl et al.):**
 ```bibtex
@@ -356,13 +356,13 @@ Released under MIT License. See the LICENSE file for details.
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
-**AI-Assisted Development**: Please note that portions of this codebase have been generated or enhanced with the assistance of AI coding tools. While we have thoroughly tested all implementations, users are encouraged to review the code and verify its correctness for their specific use cases.
+**AI-Assisted Development**: Please note that portions of this codebase have been generated or enhanced with the assistance of AI coding tools. While we have thoroughly tested and validated all implementations, users are encouraged to review the code and verify its correctness for their specific use cases.
 
 ---
 
-## 🏆 Acknowledgments
+## Acknowledgments
 
 This library builds upon numerous research contributions in explainable AI and counterfactual explanations. We thank all researchers and developers who have contributed to this field, particularly the authors of the implemented algorithms.
 

@@ -27,6 +27,20 @@ dependencies = [
   "tqdm>=4.64",
 ]
 
+[project.optional-dependencies]
+dtw = ["dtaidistance>=2.3"]
+examples = [
+  "seaborn>=0.13",
+  "pandas>=2.0",
+  "aeon>=1.0",
+]
+all = [
+  "dtaidistance>=2.3",
+  "seaborn>=0.13",
+  "pandas>=2.0",
+  "aeon>=1.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series"
 Repository = "https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series"

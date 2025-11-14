@@ -7,11 +7,12 @@ This package provides implementations such as:
 - Comte counterfactuals (cf_comte)
 - DANDL counterfactuals (cf_dandl)
 - SETS counterfactuals (cf_sets)
+- GLACIER counterfactuals (cf_glacier)
 Utility helpers under `utils`.
 """
 
-from . import cf_wachter, cf_native_guide, cf_comte, cf_dandl, cf_sets
+from . import cf_wachter, cf_native_guide, cf_comte, cf_dandl, cf_sets, cf_glacier
 
-__all__ = ["cf_wachter", "cf_native_guide", "cf_comte", "cf_dandl", "cf_sets"]
+__all__ = ["cf_wachter", "cf_native_guide", "cf_comte", "cf_dandl", "cf_sets", "cf_glacier"]
 
 __version__ = "0.1.0"

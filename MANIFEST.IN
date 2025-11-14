@@ -1,4 +1,6 @@
 include LICENSE
 include README.md
-include counterfactuals.png
+include requirements.txt
+include cfts/metrics/README.md
 recursive-include cfts *.py
+recursive-include models *.pth
