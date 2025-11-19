@@ -15,7 +15,8 @@ def comte_cf(
     learning_rate: float = 0.1,
     max_iterations: int = 3000,
     tolerance: float = 1e-4,
-    device: str = None
+    device: str = None,
+    verbose: bool = False
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Generate counterfactual explanation using COMTE algorithm.
@@ -90,7 +91,8 @@ def comte_cf(
         if iteration == phase1_iterations:
             current_lambda_reg = lambda_reg
             current_lambda_sparse = lambda_sparse
-            print(f"COMTE: Switching to phase 2 with regularization at iteration {iteration}")
+            if verbose:
+                print(f"COMTE: Switching to phase 2 with regularization at iteration {iteration}")
         
         optimizer.zero_grad()
         
@@ -132,19 +134,20 @@ def comte_cf(
                 best_validity = current_validity
                 best_cf = x_cf.clone().detach()
         
-        # Early stopping if we achieve very good validity
-        if current_pred_class == target_class and current_validity > 0.9:
-            print(f"COMTE: Early stop at iteration {iteration} with validity {current_validity:.4f}")
+                # Early stopping if we've achieved good validity
+        if current_validity > 0.99:
+            if verbose:
+                print(f"COMTE: Early stop at iteration {iteration} with validity {current_validity:.4f}")
             break
         
-        # Print progress every 500 iterations for debugging
-        if iteration % 500 == 0:
+        # Debug output every 500 iterations
+        if verbose and iteration % 500 == 0:
             print(f"COMTE iteration {iteration}: loss={total_loss.item():.4f}, "
-                  f"pred_loss={pred_loss.item():.4f}, pred_class={current_pred_class}, "
-                  f"target={target_class}, validity={current_validity:.4f}")
+                  f"validity={current_validity:.4f}, pred_class={current_pred_class}")
     
     if best_cf is None:
-        print("COMTE: No counterfactual found - best_cf is None")
+        if verbose:
+            print("COMTE: No counterfactual found - best_cf is None")
         return None, None
     
     # Get final prediction
@@ -154,12 +157,14 @@ def comte_cf(
         final_pred_np = torch.softmax(final_pred, dim=-1).squeeze().cpu().numpy()
         final_validity = final_pred_np[target_class]
     
-    print(f"COMTE final: pred_class={predicted_class}, target={target_class}, validity={final_validity:.4f}")
+    if verbose:
+        print(f"COMTE final: pred_class={predicted_class}, target={target_class}, validity={final_validity:.4f}")
     
     # Check if counterfactual is valid - use relaxed criteria
     # Accept if either predicted class matches OR validity is reasonably high
     if predicted_class != target_class and final_validity < 0.4:
-        print(f"COMTE: Counterfactual failed validation - predicted {predicted_class}, wanted {target_class}, validity too low")
+        if verbose:
+            print(f"COMTE: Counterfactual failed validation - predicted {predicted_class}, wanted {target_class}, validity too low")
         return None, None
     
     # Convert back to original sample format

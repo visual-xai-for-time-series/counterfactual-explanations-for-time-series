@@ -16,7 +16,8 @@ def moc_cf(
     mutation_rate: float = 0.1,
     crossover_rate: float = 0.8,
     tournament_size: int = 3,
-    device: str = None
+    device: str = None,
+    verbose: bool = False
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Generate counterfactual explanation using MOC (Multi-Objective Counterfactuals) algorithm.
@@ -72,7 +73,8 @@ def moc_cf(
     if original_class == target_class:
         return None, None
     
-    print(f"MOC: Original class {original_class}, Target class {target_class}")
+    if verbose:
+        print(f"MOC: Original class {original_class}, Target class {target_class}")
 
     # Initialize MOC optimizer
     moc = MOCOptimizer(
@@ -83,16 +85,19 @@ def moc_cf(
         mutation_rate=mutation_rate,
         crossover_rate=crossover_rate,
         tournament_size=tournament_size,
-        device=device
+        device=device,
+        verbose=verbose
     )
     
     # Run multi-objective optimization
     pareto_front = moc.optimize(generations)
     
-    print(f"MOC: Found {len(pareto_front) if pareto_front else 0} solutions in Pareto front")
+    if verbose:
+        print(f"MOC: Found {len(pareto_front) if pareto_front else 0} solutions in Pareto front")
     
     if not pareto_front:
-        print("MOC: No counterfactual found - empty Pareto front")
+        if verbose:
+            print("MOC: No counterfactual found - empty Pareto front")
         return None, None    # Select best counterfactual from Pareto front (highest validity, then lowest distance)
     best_cf = None
     best_score = -1
@@ -108,7 +113,8 @@ def moc_cf(
             best_cf = cf_sample
     
     if best_cf is None:
-        print("MOC: No valid solution found in Pareto front")
+        if verbose:
+            print("MOC: No valid solution found in Pareto front")
         return None, None
     
     # Get final prediction
@@ -126,11 +132,13 @@ def moc_cf(
         predicted_class = torch.argmax(final_pred, dim=-1).item()
         final_validity = final_pred_np[target_class]
     
-    print(f"MOC final: pred_class={predicted_class}, target={target_class}, validity={final_validity:.4f}")
+    if verbose:
+        print(f"MOC final: pred_class={predicted_class}, target={target_class}, validity={final_validity:.4f}")
     
     # Use relaxed validation like other methods
     if predicted_class != target_class and final_validity < 0.4:
-        print(f"MOC: Counterfactual failed validation - predicted {predicted_class}, wanted {target_class}, validity too low")
+        if verbose:
+            print(f"MOC: Counterfactual failed validation - predicted {predicted_class}, wanted {target_class}, validity too low")
         return None, None
     
     return best_cf, final_pred_np
@@ -148,7 +156,8 @@ class MOCOptimizer:
         mutation_rate: float = 0.1,
         crossover_rate: float = 0.8,
         tournament_size: int = 3,
-        device: str = 'cpu'
+        device: str = 'cpu',
+        verbose: bool = False
     ):
         self.original_sample = original_sample
         self.model = model
@@ -158,6 +167,7 @@ class MOCOptimizer:
         self.crossover_rate = crossover_rate
         self.tournament_size = tournament_size
         self.device = device
+        self.verbose = verbose
         
         # Calculate statistics for realistic bounds
         if hasattr(self.original_sample, 'flatten'):
@@ -415,11 +425,13 @@ class MOCOptimizer:
     
     def optimize(self, generations: int) -> List[Tuple[np.ndarray, Tuple[float, float, float, float]]]:
         """Run the multi-objective optimization."""
-        print(f"MOC: Starting optimization with {self.population_size} individuals for {generations} generations")
+        if self.verbose:
+            print(f"MOC: Starting optimization with {self.population_size} individuals for {generations} generations")
         
         # Initialize population
         population = self.initialize_population()
-        print(f"MOC: Initialized population of {len(population)} individuals")
+        if self.verbose:
+            print(f"MOC: Initialized population of {len(population)} individuals")
         
         best_validity = 0.0
         valid_solutions = 0
@@ -440,8 +452,9 @@ class MOCOptimizer:
             
             # Print progress every 10 generations
             if generation % 10 == 0:
-                print(f"MOC generation {generation}: best_validity={current_best_validity:.4f}, "
-                      f"valid_solutions={current_valid_solutions}/{len(population)}")
+                if self.verbose:
+                    print(f"MOC generation {generation}: best_validity={current_best_validity:.4f}, "
+                          f"valid_solutions={current_valid_solutions}/{len(population)}")
             
             # Generate offspring
             offspring = []
@@ -460,7 +473,8 @@ class MOCOptimizer:
                     
                     offspring.extend([child1, child2])
                 except Exception as e:
-                    print(f"MOC: Error in generation {generation}: {e}")
+                    if self.verbose:
+                        print(f"MOC: Error in generation {generation}: {e}")
                     # Add random individuals if selection fails
                     noise1 = np.random.normal(0, self.sample_std * 0.2, self.original_sample.shape)
                     noise2 = np.random.normal(0, self.sample_std * 0.2, self.original_sample.shape)
@@ -474,7 +488,8 @@ class MOCOptimizer:
             try:
                 fronts = self.fast_non_dominated_sort(combined_pop, combined_obj)
             except Exception as e:
-                print(f"MOC: Error in non-dominated sorting: {e}")
+                if self.verbose:
+                    print(f"MOC: Error in non-dominated sorting: {e}")
                 # Fallback: select by validity only
                 combined_with_scores = list(zip(combined_pop, combined_obj))
                 combined_with_scores.sort(key=lambda x: x[1][0], reverse=True)  # Sort by validity
@@ -501,7 +516,8 @@ class MOCOptimizer:
                             new_population.append(combined_pop[idx])
                             new_objectives.append(combined_obj[idx])
                     except Exception as e:
-                        print(f"MOC: Error in crowding distance: {e}")
+                        if self.verbose:
+                            print(f"MOC: Error in crowding distance: {e}")
                         # Fallback: add first few from front
                         remaining = self.population_size - len(new_population)
                         for idx in front[:remaining]:
@@ -512,7 +528,8 @@ class MOCOptimizer:
             population = new_population
             objectives = new_objectives
         
-        print(f"MOC: Optimization complete. Best validity achieved: {best_validity:.4f}")
+        if self.verbose:
+            print(f"MOC: Optimization complete. Best validity achieved: {best_validity:.4f}")
         
         # Return Pareto front
         final_objectives = [self.evaluate_objectives(ind) for ind in population]
@@ -520,11 +537,13 @@ class MOCOptimizer:
         
         pareto_front = []
         if fronts and len(fronts) > 0:
-            print(f"MOC: First front has {len(fronts[0])} solutions")
+            if self.verbose:
+                print(f"MOC: First front has {len(fronts[0])} solutions")
             for idx in fronts[0]:  # First front is Pareto optimal
                 pareto_front.append((population[idx], final_objectives[idx]))
         else:
-            print("MOC: No fronts found, returning best by validity")
+            if self.verbose:
+                print("MOC: No fronts found, returning best by validity")
             # Fallback: return best individuals by validity
             pop_with_obj = list(zip(population, final_objectives))
             pop_with_obj.sort(key=lambda x: x[1][0], reverse=True)  # Sort by validity

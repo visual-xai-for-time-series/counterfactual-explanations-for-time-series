@@ -19,7 +19,8 @@ def sets_cf(
     learning_rate: float = 0.1,
     max_iterations: int = 2000,
     tolerance: float = 1e-4,
-    device: str = None
+    device: str = None,
+    verbose: bool = False
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Generate counterfactual explanation using SETS algorithm.
@@ -81,11 +82,13 @@ def sets_cf(
     if original_class == target_class:
         return None, None
     
-    print(f"SETS: Original class {original_class}, Target class {target_class}")
+    if verbose:
+        print(f"SETS: Original class {original_class}, Target class {target_class}")
 
     # Generate segments
     segments = _generate_segments(x_tensor, n_segments, segment_method)
-    print(f"SETS: Generated {len(segments)} segments")
+    if verbose:
+        print(f"SETS: Generated {len(segments)} segments")
     
     # Initialize segment-wise perturbations
     segment_deltas = {}
@@ -114,7 +117,8 @@ def sets_cf(
             current_lambda_reg = lambda_reg
             current_lambda_sparse = lambda_sparse
             current_lambda_smooth = lambda_smooth
-            print(f"SETS: Switching to phase 2 with regularization at iteration {iteration}")
+            if verbose:
+                print(f"SETS: Switching to phase 2 with regularization at iteration {iteration}")
         
         optimizer.zero_grad()
         
@@ -169,17 +173,19 @@ def sets_cf(
         
         # Early stopping if we achieve very good validity
         if current_pred_class == target_class and current_validity > 0.9:
-            print(f"SETS: Early stop at iteration {iteration} with validity {current_validity:.4f}")
+            if verbose:
+                print(f"SETS: Early stop at iteration {iteration} with validity {current_validity:.4f}")
             break
         
         # Print progress every 500 iterations for debugging
-        if iteration % 500 == 0:
+        if verbose and iteration % 500 == 0:
             print(f"SETS iteration {iteration}: loss={total_loss.item():.4f}, "
                   f"pred_loss={pred_loss.item():.4f}, pred_class={current_pred_class}, "
                   f"target={target_class}, validity={current_validity:.4f}")
     
     if best_cf is None:
-        print("SETS: No counterfactual found - best_cf is None")
+        if verbose:
+            print("SETS: No counterfactual found - best_cf is None")
         return None, None
     
     # Get final prediction
@@ -189,11 +195,13 @@ def sets_cf(
         final_pred_np = torch.softmax(final_pred, dim=-1).squeeze().cpu().numpy()
         final_validity = final_pred_np[target_class]
     
-    print(f"SETS final: pred_class={predicted_class}, target={target_class}, validity={final_validity:.4f}")
+    if verbose:
+        print(f"SETS final: pred_class={predicted_class}, target={target_class}, validity={final_validity:.4f}")
     
     # Check if counterfactual is valid - use relaxed criteria
     if predicted_class != target_class and final_validity < 0.4:
-        print(f"SETS: Counterfactual failed validation - predicted {predicted_class}, wanted {target_class}, validity too low")
+        if verbose:
+            print(f"SETS: Counterfactual failed validation - predicted {predicted_class}, wanted {target_class}, validity too low")
         return None, None
     
     # Convert back to original sample format

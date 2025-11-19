@@ -84,7 +84,7 @@ def _ensure_ncl(sample, dataset):
     return s_ncl, ts, ori
 
 
-def native_guide_uni_cf(sample, dataset, model, weight_function=GradientShap, iterate=None, sub_len=1):
+def native_guide_uni_cf(sample, dataset, model, weight_function=GradientShap, iterate=None, sub_len=1, verbose=False):
     """Native Guide counterfactual supporting multivariate inputs.
 
     Returns counterfactual in same orientation as input sample, plus model scores.

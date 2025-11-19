@@ -131,7 +131,7 @@ def calculate_feature_importance(model, sample, dataset, device):
 
 def multi_space_cf(sample, dataset, model, weight_function=GradientShap, 
                    iterate=None, sub_len=1, population_size=50, max_iterations=100,
-                   sparsity_weight=0.3, validity_weight=0.7):
+                   sparsity_weight=0.3, validity_weight=0.7, verbose=False):
     """Multi-SpaCE counterfactual generation with multi-objective optimization.
     
     This is a simplified implementation of Multi-SpaCE that uses:

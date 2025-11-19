@@ -95,7 +95,7 @@ def _revert_orientation(cf_arr, orientation):
 
 def glacier_cf(sample, dataset, model, target_class=None, lambda_sparse=0.1, lambda_proximity=1.0,
                lambda_diversity=0.1, max_iterations=1000, learning_rate=0.01, tolerance=1e-6,
-               initialization_method='closest_different'):
+               initialization_method='closest_different', verbose=False):
     """
     GLACIER: Gradient-based Learning of Approximate Counterfactual Explanations for Recurrent neural networks
     

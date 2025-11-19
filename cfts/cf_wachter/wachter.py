@@ -33,7 +33,7 @@ def euclidean_dist(x, y):
 # This is a genetic model-agnostic variant using the sensitivity of the model.
 #
 ####
-def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1):
+def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1, verbose=False):
 
     device = next(model.parameters()).device
 
@@ -67,7 +67,8 @@ def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1
         sorted_indices = np.argsort(y_cf)[::-1]  # Sort in descending order
         target = int(sorted_indices[1])  # Second most likely class
     
-    print(f"Wachter Genetic: Original class {label_cf}, Target class {target}, step_size={step_size}")
+    if verbose:
+        print(f"Wachter Genetic: Original class {label_cf}, Target class {target}, step_size={step_size}")
 
     # Iterate until the counterfactual prediction is different from the original prediction or the maximum number of steps is reached
     for step in range(max_steps):
@@ -107,16 +108,18 @@ def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1
         current_target_prob = y_cf[target]
         
         # Debug output every 200 steps
-        if step % 200 == 0:
+        if verbose and step % 200 == 0:
             print(f"Wachter Genetic step {step}: pred_class={current_class}, target={target}, "
                   f"target_prob={current_target_prob:.4f}, improvement={best_improvement:.4f}")
         
         # If the counterfactual prediction matches target, return it
         if current_class == target:
-            print(f"Wachter Genetic: Found counterfactual at step {step}")
+            if verbose:
+                print(f"Wachter Genetic: Found counterfactual at step {step}")
             return sample_cf.reshape(sample.shape), y_cf
 
-    print(f"Wachter Genetic: Max steps reached. Final target probability: {y_cf[target]:.4f}")
+    if verbose:
+        print(f"Wachter Genetic: Max steps reached. Final target probability: {y_cf[target]:.4f}")
     # If the maximum number of steps is reached without finding a counterfactual, return None
     return None, None
 
@@ -138,7 +141,8 @@ def wachter_gradient_cf(sample,
                         lb_step=None,
                         max_cfs=1000,
                         full_random=False,
-                        distance='euclidean'):
+                        distance='euclidean',
+                        verbose=False):
     """Gradient-based Wachter counterfactual implemented with pure PyTorch tensors.
 
     Fixes errors caused by mixing torch tensors with numpy/scipy indexing (e.g.
@@ -168,7 +172,8 @@ def wachter_gradient_cf(sample,
         target = int(sorted_indices[1])  # Second most likely class
     target_t = torch.tensor([target], dtype=torch.long, device=device)
     
-    print(f"Wachter Gradient: Original class {label_cf}, Target class {target}")
+    if verbose:
+        print(f"Wachter Gradient: Original class {label_cf}, Target class {target}")
 
     # distance functions using torch tensors
     def dist(x, y):
@@ -247,20 +252,23 @@ def wachter_gradient_cf(sample,
             best_validity = current_validity
 
         # Debug output every 200 iterations
-        if iteration % 200 == 0:
+        if verbose and iteration % 200 == 0:
             pred_class = int(np.argmax(y_cf))
             print(f"Wachter Gradient iter {iteration}: pred_class={pred_class}, target={target}, "
                   f"validity={current_validity:.4f}, loss={loss.item():.4f}")
 
         # stop if prediction matches target
         if int(np.argmax(y_cf)) == target:
-            print(f"Wachter Gradient: Found counterfactual at iteration {iteration}")
+            if verbose:
+                print(f"Wachter Gradient: Found counterfactual at iteration {iteration}")
             break
     
-    print(f"Wachter Gradient: Best validity achieved: {best_validity:.4f}")
+    if verbose:
+        print(f"Wachter Gradient: Best validity achieved: {best_validity:.4f}")
 
     if not cfs:
-        print("Wachter Gradient: No counterfactual candidates found")
+        if verbose:
+            print("Wachter Gradient: No counterfactual candidates found")
         return None, None
 
     # return best candidate by loss

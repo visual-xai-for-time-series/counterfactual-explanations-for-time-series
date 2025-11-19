@@ -28,6 +28,7 @@ import seaborn as sns
 import torch.nn as nn
 import torch
 import numpy as np
+import time
 
 # Set up enhanced plotting style
 plt.style.use('seaborn-v0_8-darkgrid')
@@ -176,38 +177,112 @@ if sample is None:
     print('Exiting without generating counterfactuals')
     exit(1)
 
-print(f'Selected correctly classified sample from test dataset')
+print('Selected correctly classified sample from test dataset')
+
+# Select a target class that is different from the predicted class
+# Choose the class with the second highest probability
+target_class = None
+sorted_probs = np.argsort(original_pred_np)[::-1]  # Sort in descending order
+for candidate in sorted_probs:
+    if candidate != original_class:
+        target_class = candidate
+        break
+
+if target_class is None:
+    # Fallback: just pick any class different from original
+    target_class = (original_class + 1) % output_classes
+
+print(f'Original class: {original_class}')
+print(f'Target class for all counterfactuals: {target_class}')
+print()
+
+# Dictionary to store timing results
+timing_results = {}
 
 print('Start with native guide')
+start_time = time.time()
+# Native Guide doesn't support explicit target class, it finds the nearest different class
 cf_ng, prediction_ng = ng.native_guide_uni_cf(sample, dataset_test, model)
+timing_results['Native Guide'] = time.time() - start_time
+print(f'Native Guide completed in {timing_results["Native Guide"]:.3f} seconds')
 
 print('Start with COMTE')
-cf_comte, prediction_comte = comte.comte_cf(sample, dataset_test, model)
+start_time = time.time()
+cf_comte, prediction_comte = comte.comte_cf(sample, dataset_test, model, target_class=target_class)
+timing_results['COMTE'] = time.time() - start_time
+print(f'COMTE completed in {timing_results["COMTE"]:.3f} seconds')
 
 print('Start with SETS')
-cf_sets, prediction_sets = sets.sets_cf(sample, dataset_test, model)
+start_time = time.time()
+cf_sets, prediction_sets = sets.sets_cf(sample, dataset_test, model, target_class=target_class)
+timing_results['SETS'] = time.time() - start_time
+print(f'SETS completed in {timing_results["SETS"]:.3f} seconds')
 
 print('Start with Dandl et al.')
-cf_moc, prediction_moc = dandl.moc_cf(sample, dataset_test, model)
+start_time = time.time()
+cf_moc, prediction_moc = dandl.moc_cf(sample, dataset_test, model, target_class=target_class)
+timing_results['MOC (Dandl)'] = time.time() - start_time
+print(f'MOC completed in {timing_results["MOC (Dandl)"]:.3f} seconds')
 
 print('Start with Gradient Wachter et al.')
-cf_wg, prediction_wg = w.wachter_gradient_cf(sample, dataset_test, model)
+start_time = time.time()
+cf_wg, prediction_wg = w.wachter_gradient_cf(sample, dataset_test, model, target=target_class)
+timing_results['Wachter Gradient'] = time.time() - start_time
+print(f'Wachter Gradient completed in {timing_results["Wachter Gradient"]:.3f} seconds')
+
 print('Start with Genetic Wachter et al.')
-cf_w, prediction_w = w.wachter_genetic_cf(sample, model, step_size=np.mean(dataset_test.std) + 0.2, max_steps=100)
+start_time = time.time()
+cf_w, prediction_w = w.wachter_genetic_cf(sample, model, target=target_class, step_size=np.mean(dataset_test.std) + 0.2, max_steps=100)
+timing_results['Wachter Genetic'] = time.time() - start_time
+print(f'Wachter Genetic completed in {timing_results["Wachter Genetic"]:.3f} seconds')
 
 print('Start with GLACIER')
-cf_glacier, prediction_glacier = glacier.glacier_cf(sample, dataset_test, model)
+start_time = time.time()
+cf_glacier, prediction_glacier = glacier.glacier_cf(sample, dataset_test, model, target_class=target_class)
+timing_results['GLACIER'] = time.time() - start_time
+print(f'GLACIER completed in {timing_results["GLACIER"]:.3f} seconds')
 
 print('Start with Multi-SpaCE')
+start_time = time.time()
+# Multi-SpaCE doesn't support explicit target class, it finds the nearest different class
 cf_multispace, prediction_multispace = ms.multi_space_cf(sample, dataset_test, model, 
                                                           population_size=30, 
                                                           max_iterations=50,
                                                           sparsity_weight=0.3,
                                                           validity_weight=0.7)
+timing_results['Multi-SpaCE'] = time.time() - start_time
+print(f'Multi-SpaCE completed in {timing_results["Multi-SpaCE"]:.3f} seconds')
 
-print('Results:')
-print('Label, Predictions, Native Guide, COMTE, SETS, Dandl, Wachter Genetic, Wachter Gradient, GLACIER, Multi-SpaCE')
-print(label, original_pred, prediction_ng, prediction_comte, prediction_sets, prediction_moc, prediction_w, prediction_wg, prediction_glacier, prediction_multispace)
+print()
+print('='*80)
+print('Combined Results Summary:')
+print('='*80)
+# Get original prediction info
+true_class_idx = np.argmax(label) if hasattr(label, 'shape') and len(label.shape) > 0 else label
+print(f'Target Class: {target_class}')
+print('-'*80)
+print(f'{"Method":<20} {"Status":<10} {"Pred Class":<12} {"Confidence":<12} {"Time (s)":>10}')
+print('-'*80)
+
+def format_combined_result(name, prediction, elapsed_time):
+    if prediction is None:
+        return f'{name:<20} {"Failed":<10} {"-":<12} {"-":<12} {elapsed_time:>10.3f}'
+    pred_np = np.asarray(prediction).reshape(-1)
+    pred_class = int(np.argmax(pred_np))
+    confidence = float(np.max(pred_np))
+    return f'{name:<20} {"Success":<10} {pred_class:<12} {confidence:<12.4f} {elapsed_time:>10.3f}'
+
+print(f'{"Original":<20} {"-":<10} {original_class:<12} {original_pred_np[original_class]:<12.4f} {"-":>10}')
+print(format_combined_result('Native Guide', prediction_ng, timing_results['Native Guide']))
+print(format_combined_result('COMTE', prediction_comte, timing_results['COMTE']))
+print(format_combined_result('SETS', prediction_sets, timing_results['SETS']))
+print(format_combined_result('MOC (Dandl)', prediction_moc, timing_results['MOC (Dandl)']))
+print(format_combined_result('Wachter Gradient', prediction_wg, timing_results['Wachter Gradient']))
+print(format_combined_result('Wachter Genetic', prediction_w, timing_results['Wachter Genetic']))
+print(format_combined_result('GLACIER', prediction_glacier, timing_results['GLACIER']))
+print(format_combined_result('Multi-SpaCE', prediction_multispace, timing_results['Multi-SpaCE']))
+print('='*80)
+print()
 
 # Normalize series to channel-first arrays (C, L) for plotting
 def _to_channel_first(a):
@@ -352,3 +427,5 @@ overlay(axs[i], sample_pl, cf_multispace_pl, 'Multi-SpaCE vs Original', pred_mul
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.savefig('counterfactuals_forda.png')
+print("\nPlot saved to 'counterfactuals_forda.png'. Exiting without displaying.")
+# plt.show()  # Disabled to prevent plot display
