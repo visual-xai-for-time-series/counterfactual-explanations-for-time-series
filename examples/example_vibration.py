@@ -22,6 +22,7 @@ import cfts.cf_comte.comte as comte
 import cfts.cf_sets.sets as sets
 import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
+import cfts.cf_multispace.multispace as ms
 
 
 
@@ -224,9 +225,16 @@ cf_w, prediction_w = w.wachter_genetic_cf(sample, model, step_size=np.mean(datas
 print('Start with GLACIER')
 cf_glacier, prediction_glacier = glacier.glacier_cf(sample, dataset_test, model)
 
+print('Start with Multi-SpaCE')
+cf_multispace, prediction_multispace = ms.multi_space_cf(sample, dataset_test, model,
+                                                          population_size=30,
+                                                          max_iterations=50,
+                                                          sparsity_weight=0.3,
+                                                          validity_weight=0.7)
+
 print('Results:')
-print('Label, Predictions, Native Guide, COMTE, SETS, Dandl, Wachter Genetic, Wachter Gradient, GLACIER')
-print(label, original_pred, prediction_ng, prediction_comte, prediction_sets, prediction_moc, prediction_w, prediction_wg, prediction_glacier)
+print('Label, Predictions, Native Guide, COMTE, SETS, Dandl, Wachter Genetic, Wachter Gradient, GLACIER, Multi-SpaCE')
+print(label, original_pred, prediction_ng, prediction_comte, prediction_sets, prediction_moc, prediction_w, prediction_wg, prediction_glacier, prediction_multispace)
 print(f'\nClass names: {class_names}')
 
 # Normalize series to channel-first arrays (C, L) for plotting
@@ -250,6 +258,7 @@ cf_moc_pl = None if cf_moc is None else _to_channel_first(cf_moc)
 cf_wg_pl = None if cf_wg is None else _to_channel_first(cf_wg)
 cf_w_pl = None if cf_w is None else _to_channel_first(cf_w)
 cf_glacier_pl = None if cf_glacier is None else _to_channel_first(cf_glacier)
+cf_multispace_pl = None if cf_multispace is None else _to_channel_first(cf_multispace)
 
 def _fmt_pred(pred):
     """Format a model prediction array into 'label (conf)' or 'None'."""
@@ -267,6 +276,7 @@ pred_moc_str = _fmt_pred(prediction_moc)
 pred_wg_str = _fmt_pred(prediction_wg)
 pred_w_str = _fmt_pred(prediction_w)
 pred_glacier_str = _fmt_pred(prediction_glacier)
+pred_multispace_str = _fmt_pred(prediction_multispace)
 pred_original_str = _fmt_pred(original_pred_np)
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
@@ -281,7 +291,7 @@ def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     if C > 1:
         ax.legend([f'channel:{i}' for i in range(C)], loc='upper right', fontsize='small')
 
-n_rows = 15  # Back to GLACIER count
+n_rows = 17  # Individual plots + overlay plots (added Multi-SpaCE)
 fig, axs = plt.subplots(n_rows, figsize=(10, 2.2 * n_rows))
 fig.suptitle('Counterfactual Explanations')
 
@@ -336,6 +346,12 @@ else:
     axs[i].set_title('GLACIER Counterfactual (none)')
 i += 1
 
+if cf_multispace_pl is not None:
+    plot_channels(axs[i], cf_multispace_pl, f'Multi-SpaCE Counterfactual — pred: {pred_multispace_str}')
+else:
+    axs[i].set_title('Multi-SpaCE Counterfactual (none)')
+i += 1
+
 # overlay plots: counterfactual vs original
 def overlay(ax, base, other, title, pred_str=None):
     if other is None:
@@ -360,6 +376,8 @@ i += 1
 overlay(axs[i], sample_pl, cf_w_pl, 'Wachter Genetic vs Original', pred_w_str)
 i += 1
 overlay(axs[i], sample_pl, cf_glacier_pl, 'GLACIER vs Original', pred_glacier_str)
+i += 1
+overlay(axs[i], sample_pl, cf_multispace_pl, 'Multi-SpaCE vs Original', pred_multispace_str)
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.savefig('counterfactuals_vibration.png')

@@ -1,16 +1,11 @@
 import torch
 import numpy as np
-import pandas as pd
-import os
-import urllib.request
-import zipfile
-from pathlib import Path
+import scipy.sparse as sp
 
 from aeon.datasets import load_classification
 from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
+from sklearn.preprocessing import OneHotEncoder
 from torch.utils.data import DataLoader
-import scipy.sparse as sp
 
 
 def collate_sparse(batch):
@@ -88,18 +83,12 @@ def get_UCR_UEA_dataloader(dataset_name='FordA', split='train', batch_size=256, 
     return dataloader, dataset
 
 
-# Move example usage into a main guard
-def main():
-    # Original UCR/UEA datasets
-    print("=== UCR/UEA Datasets ===")
-    data_train_loader, dataset_train = get_UCR_UEA_dataloader()
-    print(f"FordA: {dataset_train}")
-    print(f"Sample shape: {dataset_train[0][0].shape}")
+if __name__ == '__main__':
+    print('=== UCR/UEA Datasets ===')
+    _, dataset_train = get_UCR_UEA_dataloader()
+    print(f'FordA: {dataset_train}')
+    print(f'Sample shape: {dataset_train[0][0].shape}')
 
-    data_train_loader, dataset_train = get_UCR_UEA_dataloader('SpokenArabicDigits')
-    print(f"SpokenArabicDigits: {dataset_train}")
-    print(f"Sample shape: {dataset_train[0][0].shape}")
-
-
-if __name__ == "__main__":
-    main()
+    _, dataset_train = get_UCR_UEA_dataloader('SpokenArabicDigits')
+    print(f'SpokenArabicDigits: {dataset_train}')
+    print(f'Sample shape: {dataset_train[0][0].shape}')

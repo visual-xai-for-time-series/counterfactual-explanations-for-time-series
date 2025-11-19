@@ -2,7 +2,7 @@
 Arabic Digits Counterfactual Explanations Example
 
 This example demonstrates counterfactual explanation generation for the SpokenArabicDigits dataset
-using various methods (Native Guide, COMTE, SETS, MOC, Wachter, GLACIER) with enhanced visualization.
+using various methods (Native Guide, COMTE, SETS, MOC, Wachter, GLACIER, Multi-SpaCE) with enhanced visualization.
 
 Features:
 - Multi-channel time series support (13 channels, 65 timesteps)
@@ -38,6 +38,7 @@ import cfts.cf_comte.comte as comte
 import cfts.cf_sets.sets as sets
 import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
+import cfts.cf_multispace.multispace as ms
 
 
 
@@ -241,6 +242,13 @@ cf_w, prediction_w = w.wachter_genetic_cf(sample, model, step_size=step_size, ma
 print('Start with GLACIER')
 cf_glacier, prediction_glacier = glacier.glacier_cf(sample, dataset_test, model)
 
+print('Start with Multi-SpaCE')
+cf_multispace, prediction_multispace = ms.multi_space_cf(sample, dataset_test, model,
+                                                          population_size=30,
+                                                          max_iterations=50,
+                                                          sparsity_weight=0.3,
+                                                          validity_weight=0.7)
+
 print('Results Summary:')
 print('Method\t\t\tSuccess\tPredicted Class\tConfidence')
 print('-' * 55)
@@ -260,6 +268,7 @@ print(format_result('MOC', prediction_moc))
 print(format_result('Wachter Gradient', prediction_wg))
 print(format_result('Wachter Genetic', prediction_w))
 print(format_result('GLACIER', prediction_glacier))
+print(format_result('Multi-SpaCE', prediction_multispace))
 
 # Plotting for multivariate time series
 def _to_channel_first(a):
@@ -316,7 +325,8 @@ def create_enhanced_visualization(sample, label, original_pred_np, original_clas
         'MOC': '#8E44AD',  # Purple
         'Wachter Gradient': '#E67E22',  # Dark Orange
         'Wachter Genetic': '#34495E',  # Dark Gray
-        'GLACIER': '#16A085'  # Teal
+        'GLACIER': '#16A085',  # Teal
+        'Multi-SpaCE': '#C0392B'  # Dark Red
     }
     
     # Create figure with subplots for each channel
@@ -404,7 +414,8 @@ cf_results = {
     'MOC': (cf_moc, prediction_moc),
     'Wachter Gradient': (cf_wg, prediction_wg),
     'Wachter Genetic': (cf_w, prediction_w),
-    'GLACIER': (cf_glacier, prediction_glacier)
+    'GLACIER': (cf_glacier, prediction_glacier),
+    'Multi-SpaCE': (cf_multispace, prediction_multispace)
 }
 
 # Create enhanced visualization

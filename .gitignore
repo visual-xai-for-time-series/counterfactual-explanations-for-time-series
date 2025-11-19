@@ -130,3 +130,6 @@ dmypy.json
 
 
 *.pth
+
+publish_to_pypi.sh
+.pypi
