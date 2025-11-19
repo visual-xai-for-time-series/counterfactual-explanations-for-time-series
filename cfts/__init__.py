@@ -11,6 +11,7 @@ Available Algorithms:
 - SETS counterfactuals (cf_sets)
 - GLACIER counterfactuals (cf_glacier)
 - MultiSpace counterfactuals (cf_multispace)
+- TSEvo counterfactuals (cf_tsevo)
 
 Additional modules:
 - metrics: Evaluation metrics for counterfactual explanations
@@ -24,6 +25,7 @@ from . import (
     cf_sets,
     cf_glacier,
     cf_multispace,
+    cf_tsevo,
     metrics,
 )
 
@@ -35,6 +37,7 @@ __all__ = [
     "cf_sets",
     "cf_glacier",
     "cf_multispace",
+    "cf_tsevo",
     "metrics",
 ]
 
@@ -47,6 +50,7 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_sets",
     "cf_glacier",
     "cf_multispace",
+    "cf_tsevo",
 ]
 
 __version__ = "0.1.0"

@@ -38,7 +38,6 @@ python example_forda.py          # FordA dataset
 python example_vibration.py      # Synthetic vibration data
 python example_arabicdigits.py   # Multi-channel Arabic digits
 python metrics_evaluation_example.py  # Comprehensive metrics
-python mahalanobis_example.py    # Mahalanobis distance examples
 ```
 
 ## Implemented Algorithms
@@ -119,6 +118,15 @@ Multi-objective evolutionary approach finding Pareto-optimal counterfactuals.
 - **Multiple solutions**: Returns a set of counterfactuals on the Pareto frontier
 
 **Implementation:** `cfts/cf_dandl/`
+**Reference:** [Dandl et al. (2021)](https://arxiv.org/abs/2004.11165)
+```bibtex
+@article{dandl2020multi,
+  title={Multi-objective counterfactual explanations},
+  author={Dandl, Susanne and Molnar, Christoph and Binder, Martin and Bischl, Bernd},
+  journal={arXiv preprint arXiv:2004.11165},
+  year={2020}
+}
+```
 
 ### 6. **GLACIER** (`cf_glacier`)
 Advanced counterfactual generation with enhanced realism constraints.
@@ -129,6 +137,57 @@ Advanced counterfactual generation with enhanced realism constraints.
 - **Robust optimization**: Handles noisy and complex time series patterns
 
 **Implementation:** `cfts/cf_glacier/`
+**Reference:** [Wang et al. (2021)](https://github.com/zhendong3wang/learning-time-series-counterfactuals)
+```bibtex
+@article{glacier2024,
+  title={Glacier: guided locally constrained counterfactual explanations for time series classification},
+  author = {Wang, Zhendong and Samsten, Isak and Miliou, Ioanna and Mochaourab, Rami and Papapetrou, Panagiotis},
+  journal={Machine Learning},
+  year={2024}
+}
+```
+
+### 7. **Multi-SpaCE** (`cf_multispace`)
+Multi-objective counterfactual generation with subsequence-based optimization.
+
+**Key Features:**
+- **Feature importance**: Uses attribution methods for guided initialization
+- **Subsequence optimization**: Modifies meaningful temporal segments
+- **Multi-objective fitness**: Balances validity, sparsity, and plausibility
+- **Evolutionary approach**: Population-based search for diverse solutions
+
+**Implementation:** `cfts/cf_multispace/`
+**Reference:** [Refoyo and Luengo (2025)](https://github.com/MarioRefoyo/Multi-SpaCE)
+```bibtex
+@article{refoyo2024multi,
+  title={Multi-SpaCE: Multi-Objective Subsequence-based Sparse Counterfactual Explanations for Multivariate Time Series Classification},
+  author={Refoyo, Mario and Luengo, David},
+  journal={arXiv preprint arXiv:2501.04009},
+  year={2024}
+}
+```
+
+### 8. **TSEvo** (`cf_tsevo`)
+Evolutionary counterfactual explanations using NSGA-II multi-objective optimization.
+
+**Key Features:**
+- **NSGA-II algorithm**: Industry-standard multi-objective evolutionary optimizer
+- **Pareto optimization**: Simultaneously optimizes validity, proximity, and sparsity
+- **Reference set mutation**: Leverages target class examples for realistic counterfactuals
+- **Multiple operators**: Crossover, Gaussian mutation, and segment-based swapping
+
+**Implementation:** `cfts/cf_tsevo/`
+**Reference:** [Höllig et al. (2022)](https://github.com/fzi-forschungszentrum-informatik/TSInterpret)
+```bibtex
+@inproceedings{hollig2022tsevo,
+  title={TSEvo: Evolutionary counterfactual explanations for time series classification},
+  author={H{\"o}llig, Jacqueline and Kulbach, Cedric and Thoma, Steffen},
+  booktitle={2022 21st IEEE International Conference on Machine Learning and Applications (ICMLA)},
+  pages={29--36},
+  year={2022},
+  organization={IEEE}
+}
+```
 
 ## Comprehensive Evaluation Metrics
 
@@ -219,14 +278,6 @@ cd counterfactual-explanations-for-time-series
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Optional: Install in development mode
-pip install -e .
-
-# Optional: Install with additional features
-pip install -e ".[dtw]"        # DTW distance metric support
-pip install -e ".[examples]"   # Dependencies for running examples
-pip install -e ".[all]"        # All optional dependencies
 ```
 
 ## Usage
@@ -264,9 +315,6 @@ results = benchmark_algorithms(
 ```bash
 # Execute complete pipeline
 python examples/run_all.py
-
-# Quick demo
-python examples/demo_run_all.py
 ```
 
 ## Key Features
@@ -291,6 +339,8 @@ counterfactual-explanations-for-time-series/
 │   ├── cf_sets/                  # SETS implementation
 │   ├── cf_dandl/                 # MOC implementation
 │   ├── cf_glacier/               # GLACIER implementation
+│   ├── cf_multispace/            # Multi-SpaCE implementation
+│   ├── cf_tsevo/                 # TSEvo implementation
 │   └── metrics/                  # Evaluation metrics
 │       ├── validity.py           # Validity metrics
 │       ├── proximity.py          # Proximity metrics
@@ -322,27 +372,6 @@ Released under MIT License. See the LICENSE file for details.
   url = {https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series},
   version = {0.1.0},
   year = {2025}
-}
-```
-
-### Additional References
-
-**MOC Algorithm (Dandl et al.):**
-```bibtex
-@article{dandl2020multi,
-  title={Multi-objective counterfactual explanations},
-  author={Dandl, Susanne and Molnar, Christoph and Binder, Martin and Bischl, Bernd},
-  journal={arXiv preprint arXiv:2004.11165},
-  year={2020}
-}
-```
-
-**GLACIER Algorithm:**
-```bibtex
-@article{glacier2024,
-  title={GLACIER: Generating Locally Adapted Counterfactuals with Improved Realism},
-  journal={Machine Learning Research},
-  year={2024}
 }
 ```
 

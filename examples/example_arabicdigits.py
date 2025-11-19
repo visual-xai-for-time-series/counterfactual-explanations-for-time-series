@@ -40,6 +40,9 @@ import cfts.cf_sets.sets as sets
 import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
 import cfts.cf_multispace.multispace as ms
+import cfts.cf_tsevo.tsevo as tsevo
+import cfts.cf_glacier.glacier as glacier
+import cfts.cf_multispace.multispace as ms
 
 
 
@@ -295,6 +298,15 @@ cf_multispace, prediction_multispace = ms.multi_space_cf(sample, dataset_test, m
 timing_results['Multi-SpaCE'] = time.time() - start_time
 print(f'Multi-SpaCE completed in {timing_results["Multi-SpaCE"]:.3f} seconds')
 
+print('Start with TSEvo')
+start_time = time.time()
+cf_tsevo, prediction_tsevo = tsevo.tsevo_cf(sample, dataset_test, model, 
+                                            target_class=target_class,
+                                            population_size=30,
+                                            generations=50)
+timing_results['TSEvo'] = time.time() - start_time
+print(f'TSEvo completed in {timing_results["TSEvo"]:.3f} seconds')
+
 print()
 print('='*80)
 print('Combined Results Summary:')
@@ -320,6 +332,7 @@ print(format_combined_result('Wachter Gradient', prediction_wg, timing_results['
 print(format_combined_result('Wachter Genetic', prediction_w, timing_results['Wachter Genetic']))
 print(format_combined_result('GLACIER', prediction_glacier, timing_results['GLACIER']))
 print(format_combined_result('Multi-SpaCE', prediction_multispace, timing_results['Multi-SpaCE']))
+print(format_combined_result('TSEvo', prediction_tsevo, timing_results['TSEvo']))
 print('='*80)
 print()
 
@@ -379,7 +392,8 @@ def create_enhanced_visualization(sample, label, original_pred_np, original_clas
         'Wachter Gradient': '#E67E22',  # Dark Orange
         'Wachter Genetic': '#34495E',  # Dark Gray
         'GLACIER': '#16A085',  # Teal
-        'Multi-SpaCE': '#C0392B'  # Dark Red
+        'Multi-SpaCE': '#C0392B',  # Dark Red
+        'TSEvo': '#D35400'  # Burnt Orange
     }
     
     # Create figure with subplots for each channel
@@ -468,7 +482,8 @@ cf_results = {
     'Wachter Gradient': (cf_wg, prediction_wg),
     'Wachter Genetic': (cf_w, prediction_w),
     'GLACIER': (cf_glacier, prediction_glacier),
-    'Multi-SpaCE': (cf_multispace, prediction_multispace)
+    'Multi-SpaCE': (cf_multispace, prediction_multispace),
+    'TSEvo': (cf_tsevo, prediction_tsevo)
 }
 
 # Create enhanced visualization

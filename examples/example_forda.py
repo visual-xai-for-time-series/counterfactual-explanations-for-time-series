@@ -41,6 +41,10 @@ import cfts.cf_sets.sets as sets
 import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
 import cfts.cf_multispace.multispace as ms
+import cfts.cf_tsevo.tsevo as tsevo
+import cfts.cf_dandl.dandl as dandl
+import cfts.cf_glacier.glacier as glacier
+import cfts.cf_multispace.multispace as ms
 
 
 
@@ -253,6 +257,15 @@ cf_multispace, prediction_multispace = ms.multi_space_cf(sample, dataset_test, m
 timing_results['Multi-SpaCE'] = time.time() - start_time
 print(f'Multi-SpaCE completed in {timing_results["Multi-SpaCE"]:.3f} seconds')
 
+print('Start with TSEvo')
+start_time = time.time()
+cf_tsevo, prediction_tsevo = tsevo.tsevo_cf(sample, dataset_test, model, 
+                                            target_class=target_class,
+                                            population_size=30,
+                                            generations=50)
+timing_results['TSEvo'] = time.time() - start_time
+print(f'TSEvo completed in {timing_results["TSEvo"]:.3f} seconds')
+
 print()
 print('='*80)
 print('Combined Results Summary:')
@@ -281,6 +294,7 @@ print(format_combined_result('Wachter Gradient', prediction_wg, timing_results['
 print(format_combined_result('Wachter Genetic', prediction_w, timing_results['Wachter Genetic']))
 print(format_combined_result('GLACIER', prediction_glacier, timing_results['GLACIER']))
 print(format_combined_result('Multi-SpaCE', prediction_multispace, timing_results['Multi-SpaCE']))
+print(format_combined_result('TSEvo', prediction_tsevo, timing_results['TSEvo']))
 print('='*80)
 print()
 
@@ -306,6 +320,7 @@ cf_wg_pl = None if cf_wg is None else _to_channel_first(cf_wg)
 cf_w_pl = None if cf_w is None else _to_channel_first(cf_w)
 cf_glacier_pl = None if cf_glacier is None else _to_channel_first(cf_glacier)
 cf_multispace_pl = None if cf_multispace is None else _to_channel_first(cf_multispace)
+cf_tsevo_pl = None if cf_tsevo is None else _to_channel_first(cf_tsevo)
 
 def _fmt_pred(pred):
     """Format a model prediction array into 'label (conf)' or 'None'."""
@@ -324,6 +339,7 @@ pred_wg_str = _fmt_pred(prediction_wg)
 pred_w_str = _fmt_pred(prediction_w)
 pred_glacier_str = _fmt_pred(prediction_glacier)
 pred_multispace_str = _fmt_pred(prediction_multispace)
+pred_tsevo_str = _fmt_pred(prediction_tsevo)
 pred_original_str = _fmt_pred(original_pred_np)
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
@@ -338,7 +354,7 @@ def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     if C > 1:
         ax.legend([f'channel:{i}' for i in range(C)], loc='upper right', fontsize='small')
 
-n_rows = 17  # Individual plots + overlay plots (added Multi-SpaCE)
+n_rows = 19  # Individual plots + overlay plots (added Multi-SpaCE and TSEvo)
 fig, axs = plt.subplots(n_rows, figsize=(10, 2.2 * n_rows))
 fig.suptitle('Counterfactual Explanations - FordA')
 
@@ -398,6 +414,12 @@ else:
     axs[i].set_title('Multi-SpaCE Counterfactual (none)')
 i += 1
 
+if cf_tsevo_pl is not None:
+    plot_channels(axs[i], cf_tsevo_pl, f'TSEvo Counterfactual — pred: {pred_tsevo_str}')
+else:
+    axs[i].set_title('TSEvo Counterfactual (none)')
+i += 1
+
 # overlay plots: counterfactual vs original
 def overlay(ax, base, other, title, pred_str=None):
     if other is None:
@@ -424,6 +446,8 @@ i += 1
 overlay(axs[i], sample_pl, cf_glacier_pl, 'GLACIER vs Original', pred_glacier_str)
 i += 1
 overlay(axs[i], sample_pl, cf_multispace_pl, 'Multi-SpaCE vs Original', pred_multispace_str)
+i += 1
+overlay(axs[i], sample_pl, cf_tsevo_pl, 'TSEvo vs Original', pred_tsevo_str)
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.savefig('counterfactuals_forda.png')
