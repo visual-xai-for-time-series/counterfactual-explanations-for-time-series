@@ -3,8 +3,9 @@ Comprehensive Counterfactual Metrics Evaluation Example
 
 This example demonstrates how to evaluate counterfactual explanation generation
 algorithms using the comprehensive metrics suite. It integrates with the existing
-counterfactual methods (Native Guide, COMTE, SETS, MOC, Wachter, GLACIER) from
-the cfts package and evaluates them on the FordA dataset.
+counterfactual methods (Native Guide, COMTE, COMTE-TS, SETS, MOC, Wachter, GLACIER,
+Multi-SpaCE, TSEvo, LASTS, TSCF) from the cfts package and evaluates them on the
+FordA dataset.
 
 Features:
 - Real counterfactual algorithms evaluation
@@ -43,6 +44,10 @@ import cfts.cf_comte.comte as comte
 import cfts.cf_sets.sets as sets
 import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
+import cfts.cf_multispace.multispace as ms
+import cfts.cf_tsevo.tsevo as tsevo
+import cfts.cf_lasts.lasts as lasts
+import cfts.cf_tscf.tscf as tscf
 
 # Import metrics
 from cfts.metrics import (
@@ -96,6 +101,10 @@ def create_algorithm_wrappers(dataset_test, model):
         cf, _ = comte.comte_cf(original_ts, dataset_test, model)
         return cf if cf is not None else original_ts
     
+    def comte_ts_wrapper(original_ts, target_class=None, **kwargs):
+        cf, _ = comte.comte_ts_cf(original_ts, dataset_test, model, target_class=target_class)
+        return cf if cf is not None else original_ts
+    
     def sets_wrapper(original_ts, target_class=None, **kwargs):
         cf, _ = sets.sets_cf(original_ts, dataset_test, model)
         return cf if cf is not None else original_ts
@@ -117,14 +126,57 @@ def create_algorithm_wrappers(dataset_test, model):
         cf, _ = glacier.glacier_cf(original_ts, dataset_test, model)
         return cf if cf is not None else original_ts
     
+    def multispace_wrapper(original_ts, target_class=None, **kwargs):
+        # Multi-SpaCE doesn't support explicit target class, it finds the nearest different class
+        cf, _ = ms.multi_space_cf(original_ts, dataset_test, model, 
+                                  population_size=30,
+                                  max_iterations=50,
+                                  sparsity_weight=0.3,
+                                  validity_weight=0.7,
+                                  verbose=False)
+        return cf if cf is not None else original_ts
+    
+    def tsevo_wrapper(original_ts, target_class=None, **kwargs):
+        cf, _ = tsevo.tsevo_cf(original_ts, dataset_test, model, 
+                               target_class=target_class,
+                               population_size=50,
+                               generations=100,
+                               verbose=False)
+        return cf if cf is not None else original_ts
+    
+    def lasts_wrapper(original_ts, target_class=None, **kwargs):
+        cf, _ = lasts.lasts_cf(original_ts, dataset_test, model, 
+                               target_class=target_class,
+                               latent_dim=32,
+                               max_iterations=1000,
+                               train_ae_epochs=50,
+                               verbose=False)
+        return cf if cf is not None else original_ts
+    
+    def tscf_wrapper(original_ts, target_class=None, **kwargs):
+        cf, _ = tscf.tscf_cf(original_ts, dataset_test, model, 
+                            target_class=target_class,
+                            lambda_l1=0.01,
+                            lambda_l2=0.01,
+                            lambda_smooth=0.001,
+                            learning_rate=0.1,
+                            max_iterations=2000,
+                            verbose=False)
+        return cf if cf is not None else original_ts
+    
     return {
         'Native Guide': native_guide_wrapper,
         'COMTE': comte_wrapper,
+        'COMTE-TS': comte_ts_wrapper,
         'SETS': sets_wrapper,
         'MOC': moc_wrapper,
         'Wachter Gradient': wachter_gradient_wrapper,
         'Wachter Genetic': wachter_genetic_wrapper,
-        'GLACIER': glacier_wrapper
+        'GLACIER': glacier_wrapper,
+        'Multi-SpaCE': multispace_wrapper,
+        'TSEvo': tsevo_wrapper,
+        'LASTS': lasts_wrapper,
+        'TSCF': tscf_wrapper
     }
 
 
@@ -383,83 +435,6 @@ def visualize_counterfactuals(all_results, output_dir='./'):
     return output_filename
 
 
-def visualize_counterfactuals_with_original(original_ts_list, all_results, output_dir='./'):
-    """Create detailed line plots comparing each original time series with its counterfactuals."""
-    
-    # Filter valid results
-    valid_results = [(orig, res) for orig, res in zip(original_ts_list, all_results) 
-                     if res is not None and res['counterfactuals']]
-    
-    if not valid_results:
-        print("No counterfactuals to visualize!")
-        return None
-    
-    # Determine grid size
-    n_instances = len(valid_results)
-    n_cols = min(2, n_instances)
-    n_rows = (n_instances + n_cols - 1) // n_cols
-    
-    # Create figure with subplots
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(8*n_cols, 5*n_rows))
-    if n_instances == 1:
-        axes = np.array([axes])
-    axes = axes.flatten() if n_instances > 1 else axes
-    
-    fig.suptitle('Original Time Series vs Generated Counterfactuals', 
-                 fontsize=16, fontweight='bold', y=0.998)
-    
-    # Color palette
-    colors = plt.cm.tab10(np.linspace(0, 1, 10))
-    
-    for idx, (ax, (original_ts, result)) in enumerate(zip(axes[:n_instances], valid_results)):
-        counterfactuals = result['counterfactuals']
-        
-        # Flatten original if multi-dimensional
-        if original_ts.ndim > 1:
-            original_flat = original_ts.flatten() if original_ts.shape[1] == 1 else original_ts.mean(axis=1)
-        else:
-            original_flat = original_ts
-        
-        # Plot original time series with thicker line
-        ax.plot(original_flat, label='Original', 
-               color='black', linewidth=3, linestyle='-', alpha=0.8, zorder=10)
-        
-        # Plot each counterfactual
-        for cf_idx, (algorithm_name, cf_ts) in enumerate(counterfactuals.items()):
-            # Flatten if multi-dimensional
-            if cf_ts.ndim > 1:
-                cf_flat = cf_ts.flatten() if cf_ts.shape[1] == 1 else cf_ts.mean(axis=1)
-            else:
-                cf_flat = cf_ts
-            
-            ax.plot(cf_flat, label=algorithm_name, 
-                   color=colors[cf_idx % len(colors)], 
-                   linewidth=2, alpha=0.7, linestyle='--')
-        
-        ax.set_title(f'Instance {idx + 1}', fontweight='bold', fontsize=12)
-        ax.set_xlabel('Time Step', fontsize=10)
-        ax.set_ylabel('Value', fontsize=10)
-        ax.legend(loc='best', fontsize=9, framealpha=0.95)
-        ax.grid(True, alpha=0.3, linestyle=':', linewidth=0.5)
-        
-        # Add subtle shading to highlight differences
-        ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5, alpha=0.3)
-    
-    # Hide unused subplots
-    for idx in range(n_instances, len(axes)):
-        axes[idx].axis('off')
-    
-    plt.tight_layout()
-    
-    # Save the plot
-    output_filename = os.path.join(output_dir, 'original_vs_counterfactual_comparison.png')
-    plt.savefig(output_filename, dpi=300, bbox_inches='tight',
-                facecolor='white', edgecolor='none')
-    print(f"\nOriginal vs counterfactual comparison saved as: {output_filename}")
-    
-    return output_filename
-
-
 def evaluate_keane_metrics_batch(original_ts_list, all_results, model_wrapper, target_classes_list):
     """
     Evaluate Keane et al. (2021) metrics across all algorithms.
@@ -683,9 +658,6 @@ def main():
         # Create metrics visualization
         output_filename, summary_stats = create_results_visualization(valid_results)
         
-        # Create time series comparison visualization
-        visualize_counterfactuals_with_original(original_ts_list, all_results)
-        
         # Evaluate Keane et al. (2021) metrics
         df_keane = evaluate_keane_metrics_batch(original_ts_list, all_results, 
                                                 model_wrapper, target_classes_list)
@@ -749,7 +721,6 @@ def main():
     print("\n=== Evaluation Complete ===")
     print("Generated outputs:")
     print("  - counterfactual_metrics_evaluation.png (metric comparisons)")
-    print("  - original_vs_counterfactual_comparison.png (time series line plots)")
     print("  - keane_metrics_comparison.png (Keane et al. 2021 metrics)")
     print("\nKeane et al. (2021) Reference:")
     print("  Keane, M. T., Kenny, E. M., Delaney, E., & Smyth, B. (2021).")

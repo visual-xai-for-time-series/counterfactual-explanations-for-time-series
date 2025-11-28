@@ -14,11 +14,9 @@ Available Algorithms:
 - TSEvo counterfactuals (cf_tsevo)
 - LASTS counterfactuals (cf_lasts)
 - TSCF counterfactuals (cf_tscf)
-- LEFTIST counterfactuals (cf_leftist)
 
 Additional modules:
 - metrics: Evaluation metrics for counterfactual explanations
-- cf_leftist_original: Wrapper for original LEFTIST explanation method (requires tsinterpret)
 """
 
 from . import (
@@ -32,16 +30,8 @@ from . import (
     cf_tsevo,
     cf_lasts,
     cf_tscf,
-    cf_leftist,
     metrics,
 )
-
-# Optional: original LEFTIST explanation method (requires tsinterpret)
-try:
-    from . import cf_leftist_original
-    _has_leftist_original = True
-except ImportError:
-    _has_leftist_original = False
 
 __all__ = [
     "cf_wachter",
@@ -54,12 +44,8 @@ __all__ = [
     "cf_tsevo",
     "cf_lasts",
     "cf_tscf",
-    "cf_leftist",
     "metrics",
 ]
-
-if _has_leftist_original:
-    __all__.append("cf_leftist_original")
 
 # List of all available counterfactual algorithms
 COUNTERFACTUAL_ALGORITHMS = [
@@ -73,7 +59,6 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_tsevo",
     "cf_lasts",
     "cf_tscf",
-    "cf_leftist",
 ]
 
 __version__ = "0.1.1"

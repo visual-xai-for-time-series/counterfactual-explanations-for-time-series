@@ -43,7 +43,6 @@ import cfts.cf_multispace.multispace as ms
 import cfts.cf_tsevo.tsevo as tsevo
 import cfts.cf_lasts.lasts as lasts
 import cfts.cf_tscf.tscf as tscf
-import cfts.cf_leftist.leftist as leftist
 import cfts.cf_glacier.glacier as glacier
 import cfts.cf_multispace.multispace as ms
 
@@ -340,17 +339,6 @@ cf_tscf, prediction_tscf = tscf.tscf_cf(sample, dataset_test, model,
 timing_results['TSCF'] = time.time() - start_time
 print(f'TSCF completed in {timing_results["TSCF"]:.3f} seconds')
 
-print('Start with LEFTIST')
-start_time = time.time()
-cf_leftist, prediction_leftist = leftist.leftist_cf(sample, dataset_test, model, 
-                                                    target_class=target_class,
-                                                    segment_length=5,
-                                                    max_iterations=50,
-                                                    saliency_threshold=0.1,
-                                                    verbose=False)
-timing_results['LEFTIST'] = time.time() - start_time
-print(f'LEFTIST completed in {timing_results["LEFTIST"]:.3f} seconds')
-
 print()
 print('='*80)
 print('Combined Results Summary:')
@@ -380,7 +368,6 @@ print(format_combined_result('Multi-SpaCE', prediction_multispace, timing_result
 print(format_combined_result('TSEvo', prediction_tsevo, timing_results['TSEvo']))
 print(format_combined_result('LASTS', prediction_lasts, timing_results['LASTS']))
 print(format_combined_result('TSCF', prediction_tscf, timing_results['TSCF']))
-print(format_combined_result('LEFTIST', prediction_leftist, timing_results['LEFTIST']))
 print('='*80)
 print()
 
@@ -444,8 +431,7 @@ def create_enhanced_visualization(sample, label, original_pred_np, original_clas
         'Multi-SpaCE': '#C0392B',  # Dark Red
         'TSEvo': '#D35400',  # Burnt Orange
         'LASTS': '#1ABC9C',  # Turquoise
-        'TSCF': '#9B59B6',  # Amethyst
-        'LEFTIST': '#E91E63'  # Pink
+        'TSCF': '#9B59B6'  # Amethyst
     }
     
     # Create figure with subplots for each channel
@@ -538,8 +524,7 @@ cf_results = {
     'Multi-SpaCE': (cf_multispace, prediction_multispace),
     'TSEvo': (cf_tsevo, prediction_tsevo),
     'LASTS': (cf_lasts, prediction_lasts),
-    'TSCF': (cf_tscf, prediction_tscf),
-    'LEFTIST': (cf_leftist, prediction_leftist)
+    'TSCF': (cf_tscf, prediction_tscf)
 }
 
 # Create enhanced visualization

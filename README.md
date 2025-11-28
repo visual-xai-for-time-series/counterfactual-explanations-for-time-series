@@ -231,9 +231,8 @@ The library includes a complete suite of metrics for evaluating counterfactual q
 ## Examples and Datasets
 
 ### Available Examples
-- **`example_forda.py`**: FordA automotive dataset (UCR Archive)
-- **`example_vibration.py`**: Synthetic vibration fault detection
-- **`example_arabicdigits.py`**: Multi-channel spoken Arabic digits
+- **`example_univariate.py`**: FordA automotive dataset (UCR Archive)
+- **`example_multivariate.py`**: Multi-channel spoken Arabic digits
 - **`metrics_evaluation_example.py`**: Comprehensive metrics demonstration
 
 ### Supported Datasets
@@ -244,7 +243,6 @@ The library includes a complete suite of metrics for evaluating counterfactual q
 ### Pre-trained Models
 - `simple_cnn_2.pth`: Binary classification (FordA)
 - `cnn_multi_arabicdigits_10ch.pth`: Multi-class, multi-channel
-- `tiny1dcnn_vibration_6.pth`: Vibration fault classification
 
 ## Visualization Examples
 

@@ -3,7 +3,7 @@ FordA Counterfactual Explanations Example
 
 This example demonstrates counterfactual explanation generation for the FordA dataset
 using various methods (Native Guide, COMTE, SETS, MOC, Wachter, GLACIER, Multi-SpaCE, 
-TSEvo, LASTS, TSCF, and LEFTIST) with enhanced visualization.
+TSEvo, LASTS, and TSCF) with enhanced visualization.
 
 Features:
 - Univariate time series support
@@ -44,7 +44,6 @@ import cfts.cf_multispace.multispace as ms
 import cfts.cf_tsevo.tsevo as tsevo
 import cfts.cf_lasts.lasts as lasts
 import cfts.cf_tscf.tscf as tscf
-import cfts.cf_leftist.leftist as leftist
 
 
 
@@ -296,17 +295,6 @@ cf_tscf, prediction_tscf = tscf.tscf_cf(sample, dataset_test, model,
 timing_results['TSCF'] = time.time() - start_time
 print(f'TSCF completed in {timing_results["TSCF"]:.3f} seconds')
 
-print('Start with LEFTIST')
-start_time = time.time()
-cf_leftist, prediction_leftist = leftist.leftist_cf(sample, dataset_test, model, 
-                                                    target_class=target_class,
-                                                    segment_length=5,
-                                                    max_iterations=50,
-                                                    saliency_threshold=0.1,
-                                                    verbose=False)
-timing_results['LEFTIST'] = time.time() - start_time
-print(f'LEFTIST completed in {timing_results["LEFTIST"]:.3f} seconds')
-
 print()
 print('='*80)
 print('Combined Results Summary:')
@@ -339,7 +327,6 @@ print(format_combined_result('Multi-SpaCE', prediction_multispace, timing_result
 print(format_combined_result('TSEvo', prediction_tsevo, timing_results['TSEvo']))
 print(format_combined_result('LASTS', prediction_lasts, timing_results['LASTS']))
 print(format_combined_result('TSCF', prediction_tscf, timing_results['TSCF']))
-print(format_combined_result('LEFTIST', prediction_leftist, timing_results['LEFTIST']))
 print('='*80)
 print()
 
@@ -369,7 +356,6 @@ cf_multispace_pl = None if cf_multispace is None else _to_channel_first(cf_multi
 cf_tsevo_pl = None if cf_tsevo is None else _to_channel_first(cf_tsevo)
 cf_lasts_pl = None if cf_lasts is None else _to_channel_first(cf_lasts)
 cf_tscf_pl = None if cf_tscf is None else _to_channel_first(cf_tscf)
-cf_leftist_pl = None if cf_leftist is None else _to_channel_first(cf_leftist)
 
 def _fmt_pred(pred):
     """Format a model prediction array into 'label (conf)' or 'None'."""
@@ -392,7 +378,6 @@ pred_multispace_str = _fmt_pred(prediction_multispace)
 pred_tsevo_str = _fmt_pred(prediction_tsevo)
 pred_lasts_str = _fmt_pred(prediction_lasts)
 pred_tscf_str = _fmt_pred(prediction_tscf)
-pred_leftist_str = _fmt_pred(prediction_leftist)
 pred_original_str = _fmt_pred(original_pred_np)
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
@@ -407,15 +392,15 @@ def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     if C > 1:
         ax.legend([f'channel:{i}' for i in range(C)], loc='upper right', fontsize='small')
 
-n_rows = 27  # Individual plots + overlay plots (added COMTE-TS)
-fig, axs = plt.subplots(n_rows, figsize=(10, 2.2 * n_rows))
+n_rows = 25  # Individual plots + overlay plots
+fig, axs = plt.subplots(n_rows, figsize=(10, 2 * n_rows))
 fig.suptitle('Counterfactual Explanations - FordA')
 
 i = 0
 # show true label from dataset and model prediction
 true_class_idx = np.argmax(label) if hasattr(label, 'shape') and len(label.shape) > 0 else label
 true_label_str = f"Class {true_class_idx}"
-plot_channels(axs[i], sample_pl, f'Original sample — true: {true_label_str}, pred: {pred_original_str}')
+plot_channels(axs[i], sample_pl, f'Original sample — true: {true_label_str}, pred: {pred_original_str}', styles=[{'color': 'blue'}])
 i += 1
 
 # Individual counterfactual plots
@@ -491,12 +476,6 @@ else:
     axs[i].set_title('TSCF Counterfactual (none)')
 i += 1
 
-if cf_leftist_pl is not None:
-    plot_channels(axs[i], cf_leftist_pl, f'LEFTIST Counterfactual — pred: {pred_leftist_str}')
-else:
-    axs[i].set_title('LEFTIST Counterfactual (none)')
-i += 1
-
 # overlay plots: counterfactual vs original
 def overlay(ax, base, other, title, pred_str=None):
     if other is None:
@@ -505,8 +484,8 @@ def overlay(ax, base, other, title, pred_str=None):
     # include prediction in overlay title if provided
     t = f"{title} — pred: {pred_str}" if pred_str else title
     ax.set_title(t)
+    plot_channels(ax, base, title=None, styles=[{'linestyle': '--', 'color': 'blue'} for _ in range(base.shape[0])], alpha=0.6)
     plot_channels(ax, other, title=None, styles=[{'linewidth': 1.2} for _ in range(other.shape[0])], alpha=0.9)
-    plot_channels(ax, base, title=None, styles=[{'linestyle': '--'} for _ in range(base.shape[0])], alpha=0.6)
 
 overlay(axs[i], sample_pl, cf_ng_pl, 'Native Guide vs Original', pred_ng_str)
 i += 1
@@ -531,8 +510,6 @@ i += 1
 overlay(axs[i], sample_pl, cf_lasts_pl, 'LASTS vs Original', pred_lasts_str)
 i += 1
 overlay(axs[i], sample_pl, cf_tscf_pl, 'TSCF vs Original', pred_tscf_str)
-i += 1
-overlay(axs[i], sample_pl, cf_leftist_pl, 'LEFTIST vs Original', pred_leftist_str)
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.savefig('counterfactuals_forda.png')
