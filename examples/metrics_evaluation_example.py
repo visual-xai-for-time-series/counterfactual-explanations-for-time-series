@@ -9,8 +9,10 @@ the cfts package and evaluates them on the FordA dataset.
 Features:
 - Real counterfactual algorithms evaluation
 - Comprehensive metrics across all categories
+- Keane et al. (2021) evaluation metrics (validity, proximity, compactness)
 - Algorithm benchmarking and comparison
 - Professional visualization of results
+- Time series comparison plots (original vs counterfactuals)
 - Statistical analysis of performance
 """
 
@@ -48,6 +50,9 @@ from cfts.metrics import (
     l2_distance, prediction_change, percentage_changed_points,
     temporal_consistency, pairwise_distance, algorithmic_stability
 )
+
+# Import Keane et al. (2021) metrics
+from cfts.metrics.keane import validity, proximity, compactness, evaluate_keane_metrics
 
 # Set up plotting
 plt.style.use('seaborn-v0_8-darkgrid')
@@ -304,6 +309,327 @@ def create_results_visualization(all_results, output_dir='./'):
     return output_filename, summary_stats
 
 
+def visualize_counterfactuals(all_results, output_dir='./'):
+    """Create line plots comparing original time series with generated counterfactuals."""
+    
+    # Filter valid results
+    valid_results = [r for r in all_results if r is not None and r['counterfactuals']]
+    
+    if not valid_results:
+        print("No counterfactuals to visualize!")
+        return None
+    
+    # Determine grid size
+    n_instances = len(valid_results)
+    n_cols = min(3, n_instances)
+    n_rows = (n_instances + n_cols - 1) // n_cols
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
+    if n_instances == 1:
+        axes = np.array([axes])
+    axes = axes.flatten() if n_instances > 1 else axes
+    
+    fig.suptitle('Original vs Counterfactual Time Series Comparison', 
+                 fontsize=16, fontweight='bold', y=0.995)
+    
+    # Color palette for different algorithms
+    colors = plt.cm.Set2(np.linspace(0, 1, 10))
+    
+    for idx, (ax, result) in enumerate(zip(axes[:n_instances], valid_results)):
+        counterfactuals = result['counterfactuals']
+        
+        if not counterfactuals:
+            ax.axis('off')
+            continue
+        
+        # Get original time series from first counterfactual (they all share same original)
+        # We'll need to extract this from context or pass it separately
+        # For now, we'll plot the counterfactuals
+        
+        # Plot each counterfactual
+        legend_labels = []
+        for cf_idx, (algorithm_name, cf_ts) in enumerate(counterfactuals.items()):
+            # Flatten if multi-dimensional
+            if cf_ts.ndim > 1:
+                cf_flat = cf_ts.flatten() if cf_ts.shape[1] == 1 else cf_ts.mean(axis=1)
+            else:
+                cf_flat = cf_ts
+            
+            ax.plot(cf_flat, label=algorithm_name, 
+                   color=colors[cf_idx % len(colors)], 
+                   linewidth=2, alpha=0.7)
+            legend_labels.append(algorithm_name)
+        
+        ax.set_title(f'Instance {idx + 1}', fontweight='bold', fontsize=12)
+        ax.set_xlabel('Time Step', fontsize=10)
+        ax.set_ylabel('Value', fontsize=10)
+        ax.legend(loc='best', fontsize=8, framealpha=0.9)
+        ax.grid(True, alpha=0.3)
+    
+    # Hide unused subplots
+    for idx in range(n_instances, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    output_filename = os.path.join(output_dir, 'counterfactual_timeseries_comparison.png')
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight',
+                facecolor='white', edgecolor='none')
+    print(f"\nCounterfactual time series comparison saved as: {output_filename}")
+    plt.close()
+    
+    return output_filename
+
+
+def visualize_counterfactuals_with_original(original_ts_list, all_results, output_dir='./'):
+    """Create detailed line plots comparing each original time series with its counterfactuals."""
+    
+    # Filter valid results
+    valid_results = [(orig, res) for orig, res in zip(original_ts_list, all_results) 
+                     if res is not None and res['counterfactuals']]
+    
+    if not valid_results:
+        print("No counterfactuals to visualize!")
+        return None
+    
+    # Determine grid size
+    n_instances = len(valid_results)
+    n_cols = min(2, n_instances)
+    n_rows = (n_instances + n_cols - 1) // n_cols
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(8*n_cols, 5*n_rows))
+    if n_instances == 1:
+        axes = np.array([axes])
+    axes = axes.flatten() if n_instances > 1 else axes
+    
+    fig.suptitle('Original Time Series vs Generated Counterfactuals', 
+                 fontsize=16, fontweight='bold', y=0.998)
+    
+    # Color palette
+    colors = plt.cm.tab10(np.linspace(0, 1, 10))
+    
+    for idx, (ax, (original_ts, result)) in enumerate(zip(axes[:n_instances], valid_results)):
+        counterfactuals = result['counterfactuals']
+        
+        # Flatten original if multi-dimensional
+        if original_ts.ndim > 1:
+            original_flat = original_ts.flatten() if original_ts.shape[1] == 1 else original_ts.mean(axis=1)
+        else:
+            original_flat = original_ts
+        
+        # Plot original time series with thicker line
+        ax.plot(original_flat, label='Original', 
+               color='black', linewidth=3, linestyle='-', alpha=0.8, zorder=10)
+        
+        # Plot each counterfactual
+        for cf_idx, (algorithm_name, cf_ts) in enumerate(counterfactuals.items()):
+            # Flatten if multi-dimensional
+            if cf_ts.ndim > 1:
+                cf_flat = cf_ts.flatten() if cf_ts.shape[1] == 1 else cf_ts.mean(axis=1)
+            else:
+                cf_flat = cf_ts
+            
+            ax.plot(cf_flat, label=algorithm_name, 
+                   color=colors[cf_idx % len(colors)], 
+                   linewidth=2, alpha=0.7, linestyle='--')
+        
+        ax.set_title(f'Instance {idx + 1}', fontweight='bold', fontsize=12)
+        ax.set_xlabel('Time Step', fontsize=10)
+        ax.set_ylabel('Value', fontsize=10)
+        ax.legend(loc='best', fontsize=9, framealpha=0.95)
+        ax.grid(True, alpha=0.3, linestyle=':', linewidth=0.5)
+        
+        # Add subtle shading to highlight differences
+        ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5, alpha=0.3)
+    
+    # Hide unused subplots
+    for idx in range(n_instances, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    output_filename = os.path.join(output_dir, 'original_vs_counterfactual_comparison.png')
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight',
+                facecolor='white', edgecolor='none')
+    print(f"\nOriginal vs counterfactual comparison saved as: {output_filename}")
+    
+    return output_filename
+
+
+def evaluate_keane_metrics_batch(original_ts_list, all_results, model_wrapper, target_classes_list):
+    """
+    Evaluate Keane et al. (2021) metrics across all algorithms.
+    
+    Args:
+        original_ts_list: List of original time series
+        all_results: List of evaluation results with counterfactuals
+        model_wrapper: Model wrapper function
+        target_classes_list: List of target classes for each instance
+    
+    Returns:
+        DataFrame with Keane metrics for each algorithm
+    """
+    print("\n=== Evaluating Keane et al. (2021) Metrics ===")
+    print("Reference: Keane, M. T., et al. (2021). If only we had better counterfactual")
+    print("explanations. IJCAI 2021.\n")
+    
+    # Collect counterfactuals by algorithm
+    algorithm_counterfactuals = {}
+    algorithm_originals = {}
+    algorithm_targets = {}
+    
+    # Group counterfactuals by algorithm
+    for orig_ts, result, target_class in zip(original_ts_list, all_results, target_classes_list):
+        if result is None or not result.get('counterfactuals'):
+            continue
+            
+        for algorithm_name, cf_ts in result['counterfactuals'].items():
+            if algorithm_name not in algorithm_counterfactuals:
+                algorithm_counterfactuals[algorithm_name] = []
+                algorithm_originals[algorithm_name] = []
+                algorithm_targets[algorithm_name] = []
+            
+            algorithm_counterfactuals[algorithm_name].append(cf_ts)
+            algorithm_originals[algorithm_name].append(orig_ts)
+            algorithm_targets[algorithm_name].append(target_class)
+    
+    if not algorithm_counterfactuals:
+        print("No counterfactuals available for Keane metrics evaluation!")
+        return None
+    
+    # Evaluate each algorithm
+    keane_results = []
+    
+    for algorithm_name in sorted(algorithm_counterfactuals.keys()):
+        originals = algorithm_originals[algorithm_name]
+        counterfactuals = algorithm_counterfactuals[algorithm_name]
+        targets = algorithm_targets[algorithm_name]
+        
+        print(f"\nEvaluating {algorithm_name}:")
+        print(f"  Number of counterfactuals: {len(counterfactuals)}")
+        
+        # Calculate Keane metrics
+        try:
+            # 1. Validity
+            val_score = validity(originals, counterfactuals, model_wrapper, target_classes=targets)
+            print(f"  ✓ Validity: {val_score:.2%} (fraction achieving target class)")
+            
+            # 2. Proximity
+            prox_score = proximity(originals, counterfactuals)
+            print(f"  ✓ Proximity: {prox_score:.4f} (average L2 distance)")
+            
+            # 3. Compactness
+            comp_score = compactness(originals, counterfactuals, tolerance=0.01)
+            print(f"  ✓ Compactness: {comp_score:.2%} (fraction unchanged)")
+            
+            keane_results.append({
+                'Algorithm': algorithm_name,
+                'Validity': val_score,
+                'Proximity': prox_score,
+                'Compactness': comp_score,
+                'N_Samples': len(counterfactuals)
+            })
+            
+        except Exception as e:
+            print(f"  ✗ Error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    # Create DataFrame
+    if keane_results:
+        df_keane = pd.DataFrame(keane_results)
+        df_keane = df_keane.sort_values('Validity', ascending=False)
+        
+        print("\n" + "="*70)
+        print("Keane et al. (2021) Metrics Summary")
+        print("="*70)
+        print(df_keane.to_string(index=False))
+        print("="*70)
+        print("\nMetric Interpretation:")
+        print("  - Validity: Higher is better (1.0 = 100% successful)")
+        print("  - Proximity: Lower is better (smaller distance to original)")
+        print("  - Compactness: Higher is better (more values unchanged)")
+        print("="*70)
+        
+        return df_keane
+    
+    return None
+
+
+def visualize_keane_metrics(df_keane, output_dir='./'):
+    """
+    Create visualization of Keane et al. (2021) metrics.
+    
+    Args:
+        df_keane: DataFrame with Keane metrics
+        output_dir: Directory to save the plot
+    
+    Returns:
+        Path to saved plot
+    """
+    if df_keane is None or df_keane.empty:
+        print("No Keane metrics to visualize!")
+        return None
+    
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    
+    algorithms = df_keane['Algorithm'].tolist()
+    colors = plt.cm.Set2(np.linspace(0, 1, len(algorithms)))
+    
+    # 1. Validity (higher is better)
+    ax1 = axes[0]
+    bars1 = ax1.barh(algorithms, df_keane['Validity'], color=colors, alpha=0.8, edgecolor='black')
+    ax1.set_xlabel('Validity Score', fontweight='bold', fontsize=11)
+    ax1.set_title('Validity\n(Higher is Better)', fontweight='bold', fontsize=12)
+    ax1.set_xlim(0, 1)
+    ax1.grid(True, alpha=0.3, axis='x')
+    ax1.axvline(x=0.5, color='red', linestyle='--', linewidth=1, alpha=0.5, label='50% threshold')
+    
+    # Add value labels
+    for i, (bar, val) in enumerate(zip(bars1, df_keane['Validity'])):
+        ax1.text(val + 0.02, i, f'{val:.1%}', va='center', fontsize=9)
+    
+    # 2. Proximity (lower is better)
+    ax2 = axes[1]
+    bars2 = ax2.barh(algorithms, df_keane['Proximity'], color=colors, alpha=0.8, edgecolor='black')
+    ax2.set_xlabel('Proximity Score (L2 Distance)', fontweight='bold', fontsize=11)
+    ax2.set_title('Proximity\n(Lower is Better)', fontweight='bold', fontsize=12)
+    ax2.grid(True, alpha=0.3, axis='x')
+    
+    # Add value labels
+    for i, (bar, val) in enumerate(zip(bars2, df_keane['Proximity'])):
+        ax2.text(val + 0.02 * ax2.get_xlim()[1], i, f'{val:.2f}', va='center', fontsize=9)
+    
+    # 3. Compactness (higher is better)
+    ax3 = axes[2]
+    bars3 = ax3.barh(algorithms, df_keane['Compactness'], color=colors, alpha=0.8, edgecolor='black')
+    ax3.set_xlabel('Compactness Score', fontweight='bold', fontsize=11)
+    ax3.set_title('Compactness\n(Higher is Better)', fontweight='bold', fontsize=12)
+    ax3.set_xlim(0, 1)
+    ax3.grid(True, alpha=0.3, axis='x')
+    ax3.axvline(x=0.5, color='red', linestyle='--', linewidth=1, alpha=0.5, label='50% threshold')
+    
+    # Add value labels
+    for i, (bar, val) in enumerate(zip(bars3, df_keane['Compactness'])):
+        ax3.text(val + 0.02, i, f'{val:.1%}', va='center', fontsize=9)
+    
+    plt.suptitle('Keane et al. (2021) Evaluation Metrics Comparison', 
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    
+    # Save the plot
+    output_filename = os.path.join(output_dir, 'keane_metrics_comparison.png')
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight',
+                facecolor='white', edgecolor='none')
+    print(f"\nKeane metrics comparison saved as: {output_filename}")
+    
+    return output_filename
+
+
 def main():
     """Main execution function."""
     print("=== Comprehensive Counterfactual Metrics Evaluation ===\n")
@@ -328,9 +654,16 @@ def main():
     print(f"\n=== Evaluating {n_instances} test instances ===")
     
     all_results = []
+    original_ts_list = []  # Store original time series for visualization
+    target_classes_list = []  # Store target classes for Keane metrics
+    
     for i, idx in enumerate(test_indices):
         original_ts = dataset_test.X[idx]
         label = np.argmax(dataset_test.y[idx])
+        target_class = 1 - label  # Binary classification
+        
+        original_ts_list.append(original_ts)  # Save for visualization
+        target_classes_list.append(target_class)  # Save for Keane metrics
         
         print(f"\n--- Instance {i+1}/{n_instances} (Index: {idx}) ---")
         result = evaluate_single_instance(original_ts, label, model_wrapper, algorithms, dataset_test)
@@ -347,7 +680,19 @@ def main():
     
     # Create visualizations and summary
     try:
+        # Create metrics visualization
         output_filename, summary_stats = create_results_visualization(valid_results)
+        
+        # Create time series comparison visualization
+        visualize_counterfactuals_with_original(original_ts_list, all_results)
+        
+        # Evaluate Keane et al. (2021) metrics
+        df_keane = evaluate_keane_metrics_batch(original_ts_list, all_results, 
+                                                model_wrapper, target_classes_list)
+        
+        # Visualize Keane metrics
+        if df_keane is not None:
+            visualize_keane_metrics(df_keane)
         
         # Calculate algorithm success rates
         print("\n=== Algorithm Success Rates ===")
@@ -398,8 +743,19 @@ def main():
         
     except Exception as e:
         print(f"❌ Error creating visualizations: {e}")
+        import traceback
+        traceback.print_exc()
     
     print("\n=== Evaluation Complete ===")
+    print("Generated outputs:")
+    print("  - counterfactual_metrics_evaluation.png (metric comparisons)")
+    print("  - original_vs_counterfactual_comparison.png (time series line plots)")
+    print("  - keane_metrics_comparison.png (Keane et al. 2021 metrics)")
+    print("\nKeane et al. (2021) Reference:")
+    print("  Keane, M. T., Kenny, E. M., Delaney, E., & Smyth, B. (2021).")
+    print("  If only we had better counterfactual explanations: Five key deficits")
+    print("  to rectify in the evaluation of counterfactual XAI techniques.")
+    print("  In IJCAI (Vol. 21, pp. 4466-4474).")
 
 
 if __name__ == "__main__":

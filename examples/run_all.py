@@ -100,9 +100,8 @@ def check_requirements():
     
     # Check if example scripts exist
     required_scripts = [
-        'example_arabicdigits.py',
-        'example_vibration.py', 
-        'example_forda.py',
+        'example_multivariate.py',
+        'example_univariate.py',
         'metrics_evaluation_example.py'
     ]
     
@@ -146,9 +145,8 @@ def main():
     
     # List of scripts to run
     scripts_to_run = [
-        ('example_arabicdigits.py', 'Arabic Digits Counterfactual Examples'),
-        ('example_vibration.py', 'Vibration Data Counterfactual Examples'),
-        ('example_forda.py', 'FordA Dataset Counterfactual Examples'),
+        ('example_multivariate.py', 'Arabic Digits Counterfactual Examples'),
+        ('example_univariate.py', 'FordA Dataset Counterfactual Examples'),
         ('metrics_evaluation_example.py', 'Comprehensive Metrics Evaluation')
     ]
     
@@ -208,7 +206,6 @@ def main():
     print_section("Generated Files")
     generated_files = [
         'counterfactuals_arabic_digits.png',
-        'counterfactuals_vibration.png', 
         'counterfactuals_forda.png'
     ]
     

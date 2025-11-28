@@ -34,9 +34,8 @@ cd examples
 python run_all.py
 
 # Run individual examples
-python example_forda.py          # FordA dataset
-python example_vibration.py      # Synthetic vibration data
-python example_arabicdigits.py   # Multi-channel Arabic digits
+python example_univariate.py          # FordA dataset
+python example_multivariate.py   # Multi-channel Arabic digits
 python metrics_evaluation_example.py  # Comprehensive metrics
 ```
 
@@ -349,9 +348,8 @@ counterfactual-explanations-for-time-series/
 │       ├── diversity.py          # Diversity metrics
 │       └── stability.py          # Stability metrics
 ├── examples/                      # Usage examples
-│   ├── example_forda.py          # FordA dataset example
-│   ├── example_vibration.py      # Vibration data example
-│   ├── example_arabicdigits.py   # Arabic digits example
+│   ├── example_univariate.py     # FordA dataset example
+│   ├── example_multivariate.py   # Arabic digits example
 │   ├── metrics_evaluation_example.py  # Metrics demo
 │   └── run_all.py               # Execute all examples
 ├── models/                       # Pre-trained models
@@ -370,7 +368,6 @@ Released under MIT License. See the LICENSE file for details.
   author = {Schlegel, Udo},
   title = {Counterfactual Explanation Algorithms for Time Series Models},
   url = {https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series},
-  version = {0.1.0},
   year = {2025}
 }
 ```
@@ -399,4 +396,3 @@ This library builds upon numerous research contributions in explainable AI and c
 - The UCR Time Series Classification Archive for providing standard datasets
 - The PyTorch and scikit-learn communities for excellent tools
 - All contributors and users who help improve this library
-

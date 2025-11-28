@@ -11,6 +11,7 @@ from .sparsity import *
 from .realism import *
 from .diversity import *
 from .stability import *
+from .keane import *
 from .utils import *
 
 __all__ = [
@@ -57,6 +58,12 @@ __all__ = [
     'model_robustness',
     'hyperparameter_sensitivity',
     'convergence_stability',
+    
+    # Keane et al. (2021) metrics
+    'validity',
+    'proximity',
+    'compactness',
+    'evaluate_keane_metrics',
     
     # Utility classes and functions
     'CounterfactualEvaluator',

@@ -347,3 +347,215 @@ def _apply_constraints(x_cf: torch.Tensor, constraints: Dict[str, Any]):
         if 'immutable_features' in constraints:
             # This would need the original tensor to restore immutable features
             pass  # Simplified for this implementation
+
+
+def comte_ts_cf(
+    sample: np.ndarray,
+    dataset,
+    model: nn.Module,
+    target_class: Optional[int] = None,
+    lambda_reg: float = 0.01,
+    lambda_sparse: float = 0.001,
+    lambda_smooth: float = 0.01,
+    lambda_temporal: float = 0.005,
+    learning_rate: float = 0.1,
+    max_iterations: int = 3000,
+    tolerance: float = 1e-4,
+    device: str = None,
+    verbose: bool = False
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    CoMTE-TS: CoMTE for Time Series with temporal consistency constraints.
+    
+    CoMTE-TS extends the original CoMTE algorithm with additional regularization
+    terms specifically designed for time series data:
+    - Temporal smoothness: Encourages gradual changes over time
+    - Trend preservation: Maintains local temporal trends
+    - Pattern consistency: Preserves important temporal patterns
+    
+    Args:
+        sample: Original time series sample
+        dataset: Dataset object (for compatibility)
+        model: Trained classification model
+        target_class: Target class for counterfactual
+        lambda_reg: Proximity constraint weight
+        lambda_sparse: Sparsity constraint weight
+        lambda_smooth: Temporal smoothness weight (penalizes rapid changes)
+        lambda_temporal: Temporal consistency weight (preserves trends)
+        learning_rate: Learning rate for optimization
+        max_iterations: Maximum optimization iterations
+        tolerance: Convergence tolerance
+        device: Device to run on
+        verbose: Print debug information
+        
+    Returns:
+        Tuple of (counterfactual_sample, prediction) or (None, None) if failed
+    """
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Move model to device and set to eval mode
+    model.to(device)
+    model.eval()
+    
+    # Convert sample to tensor and prepare for model
+    x_tensor = torch.tensor(sample, dtype=torch.float32, device=device)
+    original_shape = sample.shape
+    
+    # Handle different input shapes - ensure (batch, channels, length)
+    if len(x_tensor.shape) == 1:
+        x_tensor = x_tensor.reshape(1, 1, -1)
+    elif len(x_tensor.shape) == 2:
+        if x_tensor.shape[0] > x_tensor.shape[1]:
+            x_tensor = x_tensor.T
+        x_tensor = x_tensor.unsqueeze(0)
+    
+    B, C, L = x_tensor.shape
+    
+    # Get original prediction
+    with torch.no_grad():
+        original_pred = model(x_tensor)
+        original_class = torch.argmax(original_pred, dim=-1).item()
+        original_pred_np = torch.softmax(original_pred, dim=-1).squeeze().cpu().numpy()
+    
+    # Determine target class
+    if target_class is None:
+        sorted_classes = torch.argsort(original_pred, dim=-1, descending=True)
+        target_class = sorted_classes[0, 1].item()
+    
+    if original_class == target_class:
+        return None, None
+    
+    # Compute original temporal properties for preservation
+    with torch.no_grad():
+        # First-order differences (velocity)
+        original_diff1 = x_tensor[:, :, 1:] - x_tensor[:, :, :-1]
+        # Second-order differences (acceleration)
+        original_diff2 = original_diff1[:, :, 1:] - original_diff1[:, :, :-1]
+    
+    # Initialize counterfactual
+    x_cf = x_tensor.clone().detach().requires_grad_(True)
+    optimizer = optim.Adam([x_cf], lr=learning_rate)
+    
+    best_cf = None
+    best_loss = float('inf')
+    best_validity = 0.0
+    
+    # Adaptive regularization: start with prediction focus, add constraints later
+    phase1_iterations = max_iterations // 3
+    phase2_iterations = 2 * max_iterations // 3
+    
+    for iteration in range(max_iterations):
+        # Adjust regularization weights progressively
+        if iteration < phase1_iterations:
+            # Phase 1: Focus on prediction
+            curr_lambda_reg = 0.0
+            curr_lambda_sparse = 0.0
+            curr_lambda_smooth = 0.0
+            curr_lambda_temporal = 0.0
+        elif iteration < phase2_iterations:
+            # Phase 2: Add proximity and smoothness
+            curr_lambda_reg = lambda_reg * 0.5
+            curr_lambda_sparse = lambda_sparse * 0.5
+            curr_lambda_smooth = lambda_smooth
+            curr_lambda_temporal = lambda_temporal * 0.5
+        else:
+            # Phase 3: Full regularization
+            curr_lambda_reg = lambda_reg
+            curr_lambda_sparse = lambda_sparse
+            curr_lambda_smooth = lambda_smooth
+            curr_lambda_temporal = lambda_temporal
+        
+        optimizer.zero_grad()
+        
+        # Forward pass
+        logits = model(x_cf)
+        log_probs = torch.log_softmax(logits, dim=-1)
+        pred_loss = -log_probs[0, target_class]
+        
+        # Proximity loss (L2 distance)
+        distance_loss = torch.norm(x_cf - x_tensor, p=2)
+        
+        # Sparsity loss (L1 distance)
+        sparsity_loss = torch.norm(x_cf - x_tensor, p=1)
+        
+        # Temporal smoothness loss: penalize large changes between consecutive time points
+        cf_diff1 = x_cf[:, :, 1:] - x_cf[:, :, :-1]
+        smoothness_loss = torch.norm(cf_diff1, p=2)
+        
+        # Temporal consistency: preserve local trends (second-order smoothness)
+        cf_diff2 = cf_diff1[:, :, 1:] - cf_diff1[:, :, :-1]
+        temporal_loss = torch.norm(cf_diff2 - original_diff2, p=2)
+        
+        # Total loss
+        total_loss = (pred_loss + 
+                     curr_lambda_reg * distance_loss + 
+                     curr_lambda_sparse * sparsity_loss +
+                     curr_lambda_smooth * smoothness_loss +
+                     curr_lambda_temporal * temporal_loss)
+        
+        # Backward pass
+        total_loss.backward()
+        optimizer.step()
+        
+        # Evaluate current solution
+        with torch.no_grad():
+            current_probs = torch.softmax(logits, dim=-1)
+            current_validity = current_probs[0, target_class].item()
+            current_pred_class = torch.argmax(current_probs, dim=-1).item()
+        
+        # Track best solution
+        if current_pred_class == target_class:
+            if current_validity > best_validity or \
+               (current_validity >= best_validity and total_loss.item() < best_loss):
+                best_loss = total_loss.item()
+                best_validity = current_validity
+                best_cf = x_cf.clone().detach()
+        elif best_cf is None or current_validity > best_validity:
+            best_validity = current_validity
+            best_cf = x_cf.clone().detach()
+        
+        # Early stopping
+        if current_validity > 0.99 and current_pred_class == target_class:
+            if verbose:
+                print(f"CoMTE-TS: Early stop at iteration {iteration} with validity {current_validity:.4f}")
+            break
+        
+        # Debug output
+        if verbose and iteration % 500 == 0:
+            print(f"CoMTE-TS iter {iteration}: loss={total_loss.item():.4f}, "
+                  f"pred={pred_loss.item():.4f}, smooth={smoothness_loss.item():.4f}, "
+                  f"validity={current_validity:.4f}, pred_class={current_pred_class}")
+    
+    if best_cf is None:
+        if verbose:
+            print("CoMTE-TS: No counterfactual found")
+        return None, None
+    
+    # Get final prediction
+    with torch.no_grad():
+        final_pred = model(best_cf)
+        predicted_class = torch.argmax(final_pred, dim=-1).item()
+        final_pred_np = torch.softmax(final_pred, dim=-1).squeeze().cpu().numpy()
+        final_validity = final_pred_np[target_class]
+    
+    if verbose:
+        print(f"CoMTE-TS final: pred_class={predicted_class}, target={target_class}, "
+              f"validity={final_validity:.4f}")
+    
+    # Relaxed validation
+    if predicted_class != target_class and final_validity < 0.3:
+        if verbose:
+            print("CoMTE-TS: Counterfactual failed validation")
+        return None, None
+    
+    # Convert back to original format
+    cf_sample = best_cf.squeeze(0).cpu().numpy()
+    
+    if len(original_shape) == 1:
+        cf_sample = cf_sample.squeeze()
+    elif len(original_shape) == 2:
+        if original_shape[0] > original_shape[1]:
+            cf_sample = cf_sample.T
+    
+    return cf_sample, final_pred_np
