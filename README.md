@@ -257,6 +257,9 @@ The library generates publication-ready visualizations:
 ![Vibration Counterfactual Explanations](counterfactuals_vibration.png)
 *Synthetic vibration data counterfactual explanations*
 
+![Keane Metrics Comparison](keane_metrics_comparison.png)
+*Comprehensive evaluation using Keane et al. (2021) metrics: Validity, Proximity, and Compactness across all algorithms*
+
 ## Installation
 
 ### Requirements
