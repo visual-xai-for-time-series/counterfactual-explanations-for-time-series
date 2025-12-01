@@ -254,11 +254,8 @@ The library generates publication-ready visualizations:
 ![Arabic Digits Counterfactual Explanations](counterfactuals_arabic_digits.png)
 *Multi-channel counterfactual analysis for Arabic digits*
 
-![Vibration Counterfactual Explanations](counterfactuals_vibration.png)
-*Synthetic vibration data counterfactual explanations*
-
 ![Keane Metrics Comparison](keane_metrics_comparison.png)
-*Comprehensive evaluation using Keane et al. (2021) metrics: Validity, Proximity, and Compactness across all algorithms*
+*Evaluation using Keane et al. (2021) metrics: Validity, Proximity, and Compactness across all algorithms*
 
 ## Installation
 
@@ -340,6 +337,7 @@ counterfactual-explanations-for-time-series/
 │   ├── cf_dandl/                 # MOC implementation
 │   ├── cf_glacier/               # GLACIER implementation
 │   ├── cf_multispace/            # Multi-SpaCE implementation
+│   ├── cf_subspace/              # Sub-SpaCE implementation
 │   ├── cf_tsevo/                 # TSEvo implementation
 │   └── metrics/                  # Evaluation metrics
 │       ├── validity.py           # Validity metrics
