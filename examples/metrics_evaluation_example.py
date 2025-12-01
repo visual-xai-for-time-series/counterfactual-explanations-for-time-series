@@ -4,8 +4,11 @@ Comprehensive Counterfactual Metrics Evaluation Example
 This example demonstrates how to evaluate counterfactual explanation generation
 algorithms using the comprehensive metrics suite. It integrates with the existing
 counterfactual methods (Native Guide, COMTE, COMTE-TS, SETS, MOC, Wachter, GLACIER,
-Multi-SpaCE, TSEvo, LASTS, TSCF) from the cfts package and evaluates them on the
+Multi-SpaCE, Sub-SpaCE, TSEvo, LASTS, TSCF) from the cfts package and evaluates them on the
 FordA dataset.
+
+Note: Sub-SpaCE is designed primarily for multivariate time series and may not work
+with univariate datasets like FordA. It will be skipped if incompatible.
 
 Features:
 - Real counterfactual algorithms evaluation
@@ -45,6 +48,7 @@ import cfts.cf_sets.sets as sets
 import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
 import cfts.cf_multispace.multispace as ms
+import cfts.cf_subspace.subspace as subspace
 import cfts.cf_tsevo.tsevo as tsevo
 import cfts.cf_lasts.lasts as lasts
 import cfts.cf_tscf.tscf as tscf
@@ -136,6 +140,33 @@ def create_algorithm_wrappers(dataset_test, model):
                                   verbose=False)
         return cf if cf is not None else original_ts
     
+    def subspace_wrapper(original_ts, target_class=None, **kwargs):
+        # Sub-SpaCE is designed for multivariate time series
+        # Check if data is univariate and skip if so
+        ts_array = np.asarray(original_ts)
+        
+        # Determine if univariate: if 1D or if 2D with one dimension being 1
+        is_univariate = (ts_array.ndim == 1 or 
+                        (ts_array.ndim == 2 and (ts_array.shape[0] == 1 or ts_array.shape[1] == 1)))
+        
+        if is_univariate:
+            raise ValueError("Sub-SpaCE not compatible with univariate data (designed for multivariate time series)")
+        
+        # For multivariate data, proceed with Sub-SpaCE
+        cf, _ = subspace.subspace_cf(original_ts, dataset_test, model,
+                                     desired_class=target_class,
+                                     population_size=100,
+                                     max_iter=200,
+                                     alpha=0.8,
+                                     beta=0.15,
+                                     eta=0.05,
+                                     invalid_penalization=20,
+                                     init_pct=0.4,
+                                     reinit=True,
+                                     verbose=False)
+        return cf if cf is not None else original_ts
+    
+    
     def tsevo_wrapper(original_ts, target_class=None, **kwargs):
         cf, _ = tsevo.tsevo_cf(original_ts, dataset_test, model, 
                                target_class=target_class,
@@ -174,6 +205,7 @@ def create_algorithm_wrappers(dataset_test, model):
         'Wachter Genetic': wachter_genetic_wrapper,
         'GLACIER': glacier_wrapper,
         'Multi-SpaCE': multispace_wrapper,
+        'Sub-SpaCE': subspace_wrapper,
         'TSEvo': tsevo_wrapper,
         'LASTS': lasts_wrapper,
         'TSCF': tscf_wrapper

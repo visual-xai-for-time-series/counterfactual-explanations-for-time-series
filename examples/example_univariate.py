@@ -44,6 +44,7 @@ import cfts.cf_multispace.multispace as ms
 import cfts.cf_tsevo.tsevo as tsevo
 import cfts.cf_lasts.lasts as lasts
 import cfts.cf_tscf.tscf as tscf
+import cfts.cf_subspace.subspace as subspace
 
 
 
@@ -259,8 +260,27 @@ cf_multispace, prediction_multispace = ms.multi_space_cf(sample, dataset_test, m
                                                           max_iterations=50,
                                                           sparsity_weight=0.3,
                                                           validity_weight=0.7)
+
 timing_results['Multi-SpaCE'] = time.time() - start_time
 print(f'Multi-SpaCE completed in {timing_results["Multi-SpaCE"]:.3f} seconds')
+
+print('Start with Sub-SpaCE')
+start_time = time.time()
+cf_subspace, prediction_subspace = subspace.subspace_cf(
+    sample, dataset_test, model,
+    desired_class=target_class,
+    population_size=100,
+    max_iter=200,  # Increased iterations
+    alpha=0.8,  # Even higher weight for classification (validity)
+    beta=0.15,  # Lower weight for sparsity
+    eta=0.05,   # Lower weight for outlier
+    invalid_penalization=20,  # Much lower penalty
+    init_pct=0.4,  # Higher initial activation
+    reinit=True,
+    verbose=False
+)
+timing_results['Sub-SpaCE'] = time.time() - start_time
+print(f'Sub-SpaCE completed in {timing_results["Sub-SpaCE"]:.3f} seconds')
 
 print('Start with TSEvo')
 start_time = time.time()
@@ -324,6 +344,7 @@ print(format_combined_result('Wachter Gradient', prediction_wg, timing_results['
 print(format_combined_result('Wachter Genetic', prediction_w, timing_results['Wachter Genetic']))
 print(format_combined_result('GLACIER', prediction_glacier, timing_results['GLACIER']))
 print(format_combined_result('Multi-SpaCE', prediction_multispace, timing_results['Multi-SpaCE']))
+print(format_combined_result('Sub-SpaCE', prediction_subspace, timing_results['Sub-SpaCE']))
 print(format_combined_result('TSEvo', prediction_tsevo, timing_results['TSEvo']))
 print(format_combined_result('LASTS', prediction_lasts, timing_results['LASTS']))
 print(format_combined_result('TSCF', prediction_tscf, timing_results['TSCF']))
@@ -356,6 +377,7 @@ cf_multispace_pl = None if cf_multispace is None else _to_channel_first(cf_multi
 cf_tsevo_pl = None if cf_tsevo is None else _to_channel_first(cf_tsevo)
 cf_lasts_pl = None if cf_lasts is None else _to_channel_first(cf_lasts)
 cf_tscf_pl = None if cf_tscf is None else _to_channel_first(cf_tscf)
+cf_subspace_pl = None if cf_subspace is None else _to_channel_first(cf_subspace)
 
 def _fmt_pred(pred):
     """Format a model prediction array into 'label (conf)' or 'None'."""
@@ -378,6 +400,7 @@ pred_multispace_str = _fmt_pred(prediction_multispace)
 pred_tsevo_str = _fmt_pred(prediction_tsevo)
 pred_lasts_str = _fmt_pred(prediction_lasts)
 pred_tscf_str = _fmt_pred(prediction_tscf)
+pred_subspace_str = _fmt_pred(prediction_subspace)
 pred_original_str = _fmt_pred(original_pred_np)
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
@@ -392,7 +415,7 @@ def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     if C > 1:
         ax.legend([f'channel:{i}' for i in range(C)], loc='upper right', fontsize='small')
 
-n_rows = 25  # Individual plots + overlay plots
+n_rows = 27  # Individual plots + overlay plots
 fig, axs = plt.subplots(n_rows, figsize=(10, 2 * n_rows))
 fig.suptitle('Counterfactual Explanations - FordA')
 
@@ -458,6 +481,12 @@ else:
     axs[i].set_title('Multi-SpaCE Counterfactual (none)')
 i += 1
 
+if cf_subspace_pl is not None:
+    plot_channels(axs[i], cf_subspace_pl, f'Sub-SpaCE Counterfactual — pred: {pred_subspace_str}')
+else:
+    axs[i].set_title('Sub-SpaCE Counterfactual (none)')
+i += 1
+
 if cf_tsevo_pl is not None:
     plot_channels(axs[i], cf_tsevo_pl, f'TSEvo Counterfactual — pred: {pred_tsevo_str}')
 else:
@@ -504,6 +533,8 @@ i += 1
 overlay(axs[i], sample_pl, cf_glacier_pl, 'GLACIER vs Original', pred_glacier_str)
 i += 1
 overlay(axs[i], sample_pl, cf_multispace_pl, 'Multi-SpaCE vs Original', pred_multispace_str)
+i += 1
+overlay(axs[i], sample_pl, cf_subspace_pl, 'Sub-SpaCE vs Original', pred_subspace_str)
 i += 1
 overlay(axs[i], sample_pl, cf_tsevo_pl, 'TSEvo vs Original', pred_tsevo_str)
 i += 1

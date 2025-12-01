@@ -40,6 +40,7 @@ import cfts.cf_sets.sets as sets
 import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
 import cfts.cf_multispace.multispace as ms
+import cfts.cf_subspace.subspace as subspace
 import cfts.cf_tsevo.tsevo as tsevo
 import cfts.cf_lasts.lasts as lasts
 import cfts.cf_tscf.tscf as tscf
@@ -304,6 +305,24 @@ cf_multispace, prediction_multispace = ms.multi_space_cf(sample, dataset_test, m
 timing_results['Multi-SpaCE'] = time.time() - start_time
 print(f'Multi-SpaCE completed in {timing_results["Multi-SpaCE"]:.3f} seconds')
 
+print('Start with Sub-SpaCE')
+start_time = time.time()
+cf_subspace, prediction_subspace = subspace.subspace_cf(
+    sample, dataset_test, model,
+    desired_class=target_class,
+    population_size=100,
+    max_iter=200,
+    alpha=0.8,
+    beta=0.15,
+    eta=0.05,
+    invalid_penalization=20,
+    init_pct=0.4,
+    reinit=True,
+    verbose=False
+)
+timing_results['Sub-SpaCE'] = time.time() - start_time
+print(f'Sub-SpaCE completed in {timing_results["Sub-SpaCE"]:.3f} seconds')
+
 print('Start with TSEvo')
 start_time = time.time()
 cf_tsevo, prediction_tsevo = tsevo.tsevo_cf(sample, dataset_test, model, 
@@ -363,6 +382,7 @@ print(format_combined_result('Wachter Gradient', prediction_wg, timing_results['
 print(format_combined_result('Wachter Genetic', prediction_w, timing_results['Wachter Genetic']))
 print(format_combined_result('GLACIER', prediction_glacier, timing_results['GLACIER']))
 print(format_combined_result('Multi-SpaCE', prediction_multispace, timing_results['Multi-SpaCE']))
+print(format_combined_result('Sub-SpaCE', prediction_subspace, timing_results['Sub-SpaCE']))
 print(format_combined_result('TSEvo', prediction_tsevo, timing_results['TSEvo']))
 print(format_combined_result('LASTS', prediction_lasts, timing_results['LASTS']))
 print(format_combined_result('TSCF', prediction_tscf, timing_results['TSCF']))
@@ -427,6 +447,7 @@ def create_enhanced_visualization(sample, label, original_pred_np, original_clas
         'Wachter Genetic': '#34495E',  # Dark Gray
         'GLACIER': '#16A085',  # Teal
         'Multi-SpaCE': '#C0392B',  # Dark Red
+        'Sub-SpaCE': '#E91E63',  # Pink
         'TSEvo': '#D35400',  # Burnt Orange
         'LASTS': '#1ABC9C',  # Turquoise
         'TSCF': '#9B59B6'  # Amethyst
@@ -520,6 +541,7 @@ cf_results = {
     'Wachter Genetic': (cf_w, prediction_w),
     'GLACIER': (cf_glacier, prediction_glacier),
     'Multi-SpaCE': (cf_multispace, prediction_multispace),
+    'Sub-SpaCE': (cf_subspace, prediction_subspace),
     'TSEvo': (cf_tsevo, prediction_tsevo),
     'LASTS': (cf_lasts, prediction_lasts),
     'TSCF': (cf_tscf, prediction_tscf)
