@@ -12,7 +12,6 @@ import torch
 import numpy as np
 import copy
 from abc import ABC, abstractmethod
-import random
 
 
 def detach_to_numpy(data):

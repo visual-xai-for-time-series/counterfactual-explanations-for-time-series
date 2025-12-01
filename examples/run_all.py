@@ -18,7 +18,6 @@ import os
 import sys
 import time
 import subprocess
-import traceback
 from datetime import datetime
 
 # Add parent directory to path
