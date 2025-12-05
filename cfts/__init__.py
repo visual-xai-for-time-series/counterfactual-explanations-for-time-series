@@ -61,4 +61,4 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_tscf",
 ]
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
