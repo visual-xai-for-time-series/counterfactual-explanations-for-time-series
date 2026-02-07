@@ -1,16 +1,20 @@
 """
 TSEvo: Evolutionary Counterfactual Explanations for Time Series Classification
 
-Implementation based on:
-Höllig, Jacqueline, et al. "TSEvo: Evolutionary counterfactual explanations for 
-time series classification." 2022 21st IEEE International Conference on Machine 
-Learning and Applications (ICMLA). IEEE, 2022.
+Paper: Höllig, J., Kulbach, C., & Thoma, S. (2022).
+       "TSEvo: Evolutionary counterfactual explanations for time series classification."
+       2022 21st IEEE International Conference on Machine Learning and Applications (ICMLA), IEEE
+
+Repository: https://github.com/fzi-forschungszentrum-informatik/TSInterpret
 
 This implementation uses NSGA-II multi-objective evolutionary optimization to find
 counterfactuals by optimizing three objectives:
 1. Validity (target class probability)
 2. Proximity (distance to original instance)
 3. Sparsity (number of changed features)
+
+The method uses reference set mutation, crossover, Gaussian mutation, and
+segment-based swapping for diverse and realistic counterfactuals.
 """
 
 import torch

@@ -5,6 +5,19 @@ import torch.optim as optim
 from typing import Optional, Tuple, Union, Dict, Any
 
 
+####
+# TSCF: Time Series CounterFactuals
+#
+# This is a custom gradient-based optimization method with temporal smoothness
+# constraints designed to generate realistic counterfactual explanations for
+# time series classification.
+#
+# The method combines standard counterfactual generation techniques with
+# time series-specific regularization (smoothness, sparsity) to maintain
+# temporal coherence in generated counterfactuals.
+####
+
+
 def detach_to_numpy(data):
     """Move PyTorch data to CPU and detach it to numpy data."""
     return data.cpu().detach().numpy()

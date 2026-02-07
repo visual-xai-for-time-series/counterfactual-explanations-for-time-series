@@ -18,8 +18,17 @@ def numpy_to_torch(data, device):
 
 
 ####
-# Instance-based Counterfactual Explanations for Time Series Classification
-# (paper reference omitted for brevity)
+# Native Guide: Instance-based Counterfactual Explanations for Time Series
+#
+# Paper: Delaney, E., Greene, D., & Keane, M. T. (2021).
+#        "Instance-based counterfactual explanations for time series classification."
+#        International Conference on Case-Based Reasoning, Springer
+#
+# Repository: https://github.com/e-delaney/Instance-Based_CFE_TSC
+#
+# Native Guide uses nearest neighbor search and gradient attribution (GradientShap)
+# to generate counterfactuals that preserve important temporal patterns while
+# leveraging similar examples from the training data.
 ####
 def _ensure_ncl(sample, dataset):
     """Ensure sample and dataset are shaped (C, L) and (N, C, L) respectively.

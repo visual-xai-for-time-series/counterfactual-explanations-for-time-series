@@ -41,152 +41,16 @@ python metrics_evaluation_example.py  # Comprehensive metrics
 
 ## Implemented Algorithms
 
-### 1. **Wachter et al.** (`cf_wachter`)
-Classic counterfactual explanation method with two optimization variants.
+This library implements **19+ state-of-the-art counterfactual explanation methods** for time series classification, organized into:
 
-**Key Features:**
-- **Gradient-based optimization**: Uses model gradients for efficient counterfactual generation
-- **Genetic algorithm variant**: Evolutionary approach for complex search spaces
-- **Proximity-focused**: Minimizes distance to original while achieving target prediction
+- **Optimization-Based Methods**: Wachter, COMTE, GLACIER, TSCF
+- **Evolutionary Methods**: MOC/DANDL, TSEvo, Multi-SpaCE, Sub-SpaCE
+- **Instance-Based Methods**: Native Guide, CELS
+- **Latent Space Methods**: Latent CF, LASTS
+- **Segment-Based Methods**: SETS, SG-CF, DisCOX
+- **Hybrid Methods**: Time-CF, FastPACE, MG-CF, TimeX
 
-**Implementation:** `cfts/cf_wachter/`  
-**Reference:** [Wachter et al. (2017)](https://christophm.github.io/interpretable-ml-book/counterfactual.html)
-```bibtex
-@article{wachter2017counterfactual,
-  title={Counterfactual explanations without opening the black box: Automated decisions and the GDPR},
-  author={Wachter, Sandra and Mittelstadt, Brent and Russell, Chris},
-  journal={Harvard Journal of Law \& Technology},
-  volume={31}, pages={841}, year={2017}
-}
-```
-
-### 2. **Native Guide** (`cf_native_guide`)
-Instance-based counterfactual generation using nearest neighbor search and gradient attribution.
-
-**Key Features:**
-- **Instance-based approach**: Leverages similar examples from training data
-- **Gradient attribution**: Uses Captum's GradientShap for feature importance
-- **Temporal awareness**: Preserves important temporal patterns
-
-**Implementation:** `cfts/cf_native_guide/`  
-**Reference:** [Delaney et al. (2021)](https://github.com/e-delaney/Instance-Based_CFE_TSC)
-```bibtex
-@inproceedings{delaney2021instance,
-  title={Instance-based counterfactual explanations for time series classification},
-  author={Delaney, Eoin and Greene, Derek and Keane, Mark T},
-  booktitle={International Conference on Case-Based Reasoning},
-  pages={32--47}, year={2021}, publisher={Springer}
-}
-```
-
-### 3. **COMTE** (`cf_comte`)
-Counterfactual explanations specifically designed for multivariate time series.
-
-**Key Features:**
-- **Multivariate support**: Handles multi-channel time series effectively
-- **Feature-wise optimization**: Optimizes each channel independently when beneficial
-- **Regularization**: Incorporates smoothness and sparsity constraints
-
-**Implementation:** `cfts/cf_comte/`  
-**Reference:** [Ates et al. (2021)](https://github.com/peaclab/CoMTE)
-```bibtex
-@inproceedings{ates2021counterfactual,
-  title={Counterfactual Explanations for Multivariate Time Series},
-  author={Ates, Emre and Aksar, Burak and Leung, Vitus J and Coskun, Ayse K},
-  booktitle={2021 International Conference on Applied Artificial Intelligence (ICAPAI)},
-  pages={1--8}, year={2021}, organization={IEEE}
-}
-```
-
-### 4. **SETS** (`cf_sets`)
-Scalable Explanation for Time Series using segment-based modifications.
-
-**Key Features:**
-- **Segment-based approach**: Modifies coherent temporal segments
-- **Interpretability focus**: Generates more human-interpretable explanations
-- **Scalable design**: Efficient for long time series
-
-**Implementation:** `cfts/cf_sets/`
-
-### 5. **MOC - Multi-Objective Counterfactuals** (`cf_dandl`)
-Multi-objective evolutionary approach finding Pareto-optimal counterfactuals.
-
-**Key Features:**
-- **Pareto optimization**: Balances multiple objectives (validity, proximity, sparsity)
-- **Evolutionary algorithm**: Uses genetic operations for diverse solutions
-- **Multiple solutions**: Returns a set of counterfactuals on the Pareto frontier
-
-**Implementation:** `cfts/cf_dandl/`
-**Reference:** [Dandl et al. (2021)](https://arxiv.org/abs/2004.11165)
-```bibtex
-@article{dandl2020multi,
-  title={Multi-objective counterfactual explanations},
-  author={Dandl, Susanne and Molnar, Christoph and Binder, Martin and Bischl, Bernd},
-  journal={arXiv preprint arXiv:2004.11165},
-  year={2020}
-}
-```
-
-### 6. **GLACIER** (`cf_glacier`)
-Advanced counterfactual generation with enhanced realism constraints.
-
-**Key Features:**
-- **Realism focus**: Incorporates domain-specific constraints
-- **Similarity preservation**: Maintains statistical properties of original data
-- **Robust optimization**: Handles noisy and complex time series patterns
-
-**Implementation:** `cfts/cf_glacier/`
-**Reference:** [Wang et al. (2021)](https://github.com/zhendong3wang/learning-time-series-counterfactuals)
-```bibtex
-@article{glacier2024,
-  title={Glacier: guided locally constrained counterfactual explanations for time series classification},
-  author = {Wang, Zhendong and Samsten, Isak and Miliou, Ioanna and Mochaourab, Rami and Papapetrou, Panagiotis},
-  journal={Machine Learning},
-  year={2024}
-}
-```
-
-### 7. **Multi-SpaCE** (`cf_multispace`)
-Multi-objective counterfactual generation with subsequence-based optimization.
-
-**Key Features:**
-- **Feature importance**: Uses attribution methods for guided initialization
-- **Subsequence optimization**: Modifies meaningful temporal segments
-- **Multi-objective fitness**: Balances validity, sparsity, and plausibility
-- **Evolutionary approach**: Population-based search for diverse solutions
-
-**Implementation:** `cfts/cf_multispace/`
-**Reference:** [Refoyo and Luengo (2025)](https://github.com/MarioRefoyo/Multi-SpaCE)
-```bibtex
-@article{refoyo2024multi,
-  title={Multi-SpaCE: Multi-Objective Subsequence-based Sparse Counterfactual Explanations for Multivariate Time Series Classification},
-  author={Refoyo, Mario and Luengo, David},
-  journal={arXiv preprint arXiv:2501.04009},
-  year={2024}
-}
-```
-
-### 8. **TSEvo** (`cf_tsevo`)
-Evolutionary counterfactual explanations using NSGA-II multi-objective optimization.
-
-**Key Features:**
-- **NSGA-II algorithm**: Industry-standard multi-objective evolutionary optimizer
-- **Pareto optimization**: Simultaneously optimizes validity, proximity, and sparsity
-- **Reference set mutation**: Leverages target class examples for realistic counterfactuals
-- **Multiple operators**: Crossover, Gaussian mutation, and segment-based swapping
-
-**Implementation:** `cfts/cf_tsevo/`
-**Reference:** [Höllig et al. (2022)](https://github.com/fzi-forschungszentrum-informatik/TSInterpret)
-```bibtex
-@inproceedings{hollig2022tsevo,
-  title={TSEvo: Evolutionary counterfactual explanations for time series classification},
-  author={H{\"o}llig, Jacqueline and Kulbach, Cedric and Thoma, Steffen},
-  booktitle={2022 21st IEEE International Conference on Machine Learning and Applications (ICMLA)},
-  pages={29--36},
-  year={2022},
-  organization={IEEE}
-}
-```
+📚 **For detailed descriptions, key features, academic references, and code examples for each method, see [REFERENCES.md](REFERENCES.md)**
 
 ## Comprehensive Evaluation Metrics
 
@@ -330,15 +194,31 @@ python examples/run_all.py
 ```
 counterfactual-explanations-for-time-series/
 ├── cfts/                          # Main library
-│   ├── cf_wachter/               # Wachter et al. implementation
-│   ├── cf_native_guide/          # Native Guide implementation
+│   ├── cf_ab_cf/                 # AB-CF implementation
+│   ├── cf_cels/                  # CELS implementation
+│   ├── cf_cfwot/                 # CFWoT implementation
+│   ├── cf_cgm/                   # CGM implementation
 │   ├── cf_comte/                 # COMTE implementation
-│   ├── cf_sets/                  # SETS implementation
+│   ├── cf_counts/                # CoUNTS implementation
 │   ├── cf_dandl/                 # MOC implementation
+│   ├── cf_discox/                # DisCOX implementation
+│   ├── cf_fastpace/              # FastPACE implementation
+│   ├── cf_fft_cf/                # FFT-CF implementation
 │   ├── cf_glacier/               # GLACIER implementation
+│   ├── cf_lasts/                 # LASTS implementation
+│   ├── cf_latent_cf/             # Latent CF implementation
+│   ├── cf_mg_cf/                 # MG-CF implementation
 │   ├── cf_multispace/            # Multi-SpaCE implementation
+│   ├── cf_native_guide/          # Native Guide implementation
+│   ├── cf_sets/                  # SETS implementation
+│   ├── cf_sg_cf/                 # SG-CF implementation
+│   ├── cf_sparce/                # SpArCE implementation
 │   ├── cf_subspace/              # Sub-SpaCE implementation
+│   ├── cf_terce/                 # TERCE implementation
+│   ├── cf_time_cf/               # Time-CF implementation
+│   ├── cf_tscf/                  # TSCF implementation
 │   ├── cf_tsevo/                 # TSEvo implementation
+│   ├── cf_wachter/               # Wachter et al. implementation
 │   └── metrics/                  # Evaluation metrics
 │       ├── validity.py           # Validity metrics
 │       ├── proximity.py          # Proximity metrics

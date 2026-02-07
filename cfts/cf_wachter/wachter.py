@@ -25,13 +25,20 @@ def euclidean_dist(x, y):
 
 
 ####
-# Counterfactual Explanations without Opening the Black Box: Automated Decisions and the GDPR
+# Wachter et al.: Counterfactual Explanations without Opening the Black Box
 #
-# https://arxiv.org/abs/1711.00399
+# Paper: Wachter, S., Mittelstadt, B., & Russell, C. (2017).
+#        "Counterfactual explanations without opening the black box:
+#        Automated decisions and the GDPR."
+#        Harvard Journal of Law & Technology, 31, 841-887
 #
+# Paper URL: https://arxiv.org/abs/1711.00399
+#
+# Classic counterfactual explanation method using gradient-based optimization
+# or genetic algorithms to find minimal perturbations that change the model's
+# prediction. Focuses on proximity while achieving target prediction.
 #
 # This is a genetic model-agnostic variant using the sensitivity of the model.
-#
 ####
 def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1, verbose=False):
 

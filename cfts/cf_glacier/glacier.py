@@ -5,6 +5,20 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+####
+# GLACIER: Guided Locally Constrained Counterfactual Explanations
+#
+# Paper: Wang, Z., Samsten, I., Miliou, I., Mochaourab, R., & Papapetrou, P. (2024).
+#        "Glacier: Guided locally constrained counterfactual explanations for time series classification."
+#        Machine Learning, Springer
+#
+# Repository: https://github.com/zhendong3wang/learning-time-series-counterfactuals
+#
+# GLACIER provides advanced counterfactual generation with enhanced realism constraints,
+# similarity preservation, and robust optimization for complex time series patterns.
+####
+
+
 def detach_to_numpy(data):
     """Move pytorch data to cpu and detach it to numpy data."""
     return data.cpu().detach().numpy()

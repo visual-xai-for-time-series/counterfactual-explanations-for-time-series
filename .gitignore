@@ -128,8 +128,11 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+*.keras
 
+*.npy
 *.pth
+*.pkl
 
 publish_to_pypi.sh
 publish_to_pypi.bash

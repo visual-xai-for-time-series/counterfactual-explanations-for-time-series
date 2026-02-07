@@ -4,14 +4,15 @@ Comprehensive Counterfactual Metrics Evaluation Example
 This example demonstrates how to evaluate counterfactual explanation generation
 algorithms using the comprehensive metrics suite. It integrates with the existing
 counterfactual methods (Native Guide, COMTE, COMTE-TS, SETS, MOC, Wachter, GLACIER,
-Multi-SpaCE, Sub-SpaCE, TSEvo, LASTS, TSCF) from the cfts package and evaluates them on the
-FordA dataset.
+Multi-SpaCE, Sub-SpaCE, TSEvo, LASTS, TSCF, FASTPACE, TIME-CF, SG-CF, MG-CF, 
+Latent-CF, DiSCoX, CELS, FFT-CF, TERCE, AB-CF, CFWOT, CGM, COUNTS, SPARCE) from the 
+cfts package and evaluates them on the FordA dataset.
 
 Note: Sub-SpaCE is designed primarily for multivariate time series and may not work
 with univariate datasets like FordA. It will be skipped if incompatible.
 
 Features:
-- Real counterfactual algorithms evaluation
+- Real counterfactual algorithms evaluation (27 methods)
 - Comprehensive metrics across all categories
 - Keane et al. (2021) evaluation metrics (validity, proximity, compactness)
 - Algorithm benchmarking and comparison
@@ -35,6 +36,7 @@ import seaborn as sns
 import pandas as pd
 import torch
 import torch.nn as nn
+from tqdm import tqdm
 
 # Import base modules
 import base.model as bm
@@ -52,6 +54,20 @@ import cfts.cf_subspace.subspace as subspace
 import cfts.cf_tsevo.tsevo as tsevo
 import cfts.cf_lasts.lasts as lasts
 import cfts.cf_tscf.tscf as tscf
+import cfts.cf_fastpace.fastpace as fastpace
+import cfts.cf_time_cf.time_cf as time_cf
+import cfts.cf_sg_cf.sg_cf as sg_cf
+from cfts.cf_mg_cf import mg_cf_generate_stumpy
+import cfts.cf_latent_cf.latent_cf as latent_cf
+import cfts.cf_discox.discox as discox
+import cfts.cf_cels.cels as cels
+from cfts.cf_fft_cf.fft_cf import fft_nn_cf
+import cfts.cf_terce.terce as terce
+import cfts.cf_ab_cf.ab_cf as ab_cf
+import cfts.cf_cfwot.cfwot as cfwot
+import cfts.cf_cgm.cgm as cgm
+import cfts.cf_counts.counts as counts
+import cfts.cf_sparce.sparce as sparce
 
 # Import metrics
 from cfts.metrics import (
@@ -195,6 +211,180 @@ def create_algorithm_wrappers(dataset_test, model):
                             verbose=False)
         return cf if cf is not None else original_ts
     
+    def fastpace_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = fastpace.fastpace_cf(original_ts, dataset_test, model, 
+                                        target=target_class,
+                                        n_planning_steps=10,
+                                        intervention_step_size=0.3,
+                                        lambda_proximity=1.0,
+                                        lambda_plausibility=0.5,
+                                        max_refinement_iterations=500,
+                                        verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def time_cf_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # TIME-CF works better with training data
+            X_train_subset = np.array([dataset_test[i][0] for i in range(min(50, len(dataset_test)))])
+            y_train_subset = np.array([np.argmax(dataset_test[i][1]) if hasattr(dataset_test[i][1], 'shape') and len(dataset_test[i][1].shape) > 0 else dataset_test[i][1] for i in range(min(50, len(dataset_test)))])
+            cf, _ = time_cf.time_cf_generate(original_ts, model, 
+                                            X_train=X_train_subset,
+                                            y_train=y_train_subset,
+                                            target=target_class,
+                                            n_epochs=20,
+                                            n_synthetic=50,
+                                            verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def sg_cf_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = sg_cf.sg_cf(original_ts, model, 
+                               target=target_class,
+                               max_iter=1000,
+                               verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def mg_cf_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # MG-CF with STUMPY optimization for faster motif mining
+            from torch.utils.data import Subset
+            subset_size = min(100, len(dataset_test))
+            dataset_subset = Subset(dataset_test, range(subset_size))
+            cf, _ = mg_cf_generate_stumpy(original_ts, dataset_subset, model, 
+                                         target=target_class,
+                                         top_k=5,
+                                         verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def latent_cf_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = latent_cf.latent_cf_generate(original_ts, dataset_test, model, 
+                                                target=target_class,
+                                                latent_dim=8,
+                                                max_iter=100,
+                                                verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def discox_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = discox.discox_generate_cf(original_ts, model, 
+                                             target=target_class,
+                                             window_size=20,
+                                             max_attempts=50,
+                                             modification_factor=1.5,
+                                             verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def cels_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # CELS requires training data for nearest unlike neighbor
+            X_train = np.array([dataset_test[i][0] for i in range(min(100, len(dataset_test)))])
+            y_train = np.array([dataset_test[i][1] for i in range(min(100, len(dataset_test)))])
+            cf, _ = cels.cels_generate(original_ts, model, X_train, y_train,
+                                      target=target_class,
+                                      max_iter=100,
+                                      verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def fft_cf_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # Using nearest neighbor FFT blending approach
+            cf, _ = fft_nn_cf(original_ts, dataset_test, model, 
+                            target_class=target_class,
+                            k=5,
+                            blend_ratio=0.5,
+                            frequency_bands="all",
+                            verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def terce_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # TERCE requires training data for nearest unlike neighbor and rule mining
+            X_train = np.array([dataset_test[i][0] for i in range(min(100, len(dataset_test)))])
+            y_train = np.array([dataset_test[i][1] for i in range(min(100, len(dataset_test)))])
+            cf, _ = terce.terce_generate(original_ts, model, X_train, y_train,
+                                        target_class=target_class,
+                                        n_regions=5,
+                                        window_size_ratio=0.1,
+                                        verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def ab_cf_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # AB-CF requires training data for nearest unlike neighbor retrieval
+            X_train = np.array([dataset_test[i][0] for i in range(min(100, len(dataset_test)))])
+            y_train = np.array([dataset_test[i][1] for i in range(min(100, len(dataset_test)))])
+            cf, _ = ab_cf.ab_cf_generate(original_ts, model, X_train, y_train,
+                                        target_class=target_class,
+                                        n_segments=10,
+                                        window_size_ratio=0.1,
+                                        verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def cfwot_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = cfwot.cfwot(original_ts, model,
+                               target=target_class,
+                               M_E=50,
+                               M_T=50,
+                               verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def cgm_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = cgm.cgm_generate(original_ts, dataset_test, model,
+                                    target=target_class,
+                                    latent_dim=16,
+                                    max_iter=100,
+                                    verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def counts_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = counts.counts_cf_with_pretrained_model(original_ts, dataset_test, model,
+                                                          target=target_class,
+                                                          latent_dim=16,
+                                                          max_iter=100,
+                                                          verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
+    def sparce_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = sparce.sparce_gradient_cf(original_ts, model,
+                                             target=target_class,
+                                             max_iter=100,
+                                             verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+    
     return {
         'Native Guide': native_guide_wrapper,
         'COMTE': comte_wrapper,
@@ -208,7 +398,21 @@ def create_algorithm_wrappers(dataset_test, model):
         'Sub-SpaCE': subspace_wrapper,
         'TSEvo': tsevo_wrapper,
         'LASTS': lasts_wrapper,
-        'TSCF': tscf_wrapper
+        'TSCF': tscf_wrapper,
+        'FASTPACE': fastpace_wrapper,
+        'TIME-CF': time_cf_wrapper,
+        'SG-CF': sg_cf_wrapper,
+        'MG-CF': mg_cf_wrapper,
+        'Latent-CF': latent_cf_wrapper,
+        'DiSCoX': discox_wrapper,
+        'CELS': cels_wrapper,
+        'FFT-CF': fft_cf_wrapper,
+        'TERCE': terce_wrapper,
+        'AB-CF': ab_cf_wrapper,
+        'CFWOT': cfwot_wrapper,
+        'CGM': cgm_wrapper,
+        'COUNTS': counts_wrapper,
+        'SPARCE': sparce_wrapper
     }
 
 
@@ -242,7 +446,7 @@ def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, data
     counterfactuals = {}
     successful_algorithms = []
     
-    for name, algorithm in algorithms.items():
+    for name, algorithm in tqdm(algorithms.items(), desc="  Generating CFs", leave=False):
         try:
             print(f"  Generating counterfactual with {name}...")
             cf = algorithm(original_ts, target_class=target_class)
@@ -350,7 +554,7 @@ def create_results_visualization(all_results, output_dir='./'):
     if not validity_data.empty:
         sns.boxplot(data=validity_data, x='Algorithm', y='Value', hue='Metric', ax=axes[0,0])
         axes[0,0].set_title('Validity Metrics', fontweight='bold')
-        axes[0,0].tick_params(axis='x', rotation=45)
+        axes[0,0].set_xticklabels(axes[0,0].get_xticklabels(), rotation=45, ha='right')
         axes[0,0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
     # Plot proximity metrics
@@ -358,7 +562,7 @@ def create_results_visualization(all_results, output_dir='./'):
     if not proximity_data.empty:
         sns.boxplot(data=proximity_data, x='Algorithm', y='Value', hue='Metric', ax=axes[0,1])
         axes[0,1].set_title('Proximity Metrics', fontweight='bold')
-        axes[0,1].tick_params(axis='x', rotation=45)
+        axes[0,1].set_xticklabels(axes[0,1].get_xticklabels(), rotation=45, ha='right')
         axes[0,1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
     # Plot sparsity metrics
@@ -366,7 +570,7 @@ def create_results_visualization(all_results, output_dir='./'):
     if not sparsity_data.empty:
         sns.boxplot(data=sparsity_data, x='Algorithm', y='Value', hue='Metric', ax=axes[1,0])
         axes[1,0].set_title('Sparsity Metrics', fontweight='bold')
-        axes[1,0].tick_params(axis='x', rotation=45)
+        axes[1,0].set_xticklabels(axes[1,0].get_xticklabels(), rotation=45, ha='right')
         axes[1,0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
     # Plot realism metrics
@@ -374,7 +578,7 @@ def create_results_visualization(all_results, output_dir='./'):
     if not realism_data.empty:
         sns.boxplot(data=realism_data, x='Algorithm', y='Value', hue='Metric', ax=axes[1,1])
         axes[1,1].set_title('Realism Metrics', fontweight='bold')
-        axes[1,1].tick_params(axis='x', rotation=45)
+        axes[1,1].set_xticklabels(axes[1,1].get_xticklabels(), rotation=45, ha='right')
         axes[1,1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
@@ -664,7 +868,7 @@ def main():
     original_ts_list = []  # Store original time series for visualization
     target_classes_list = []  # Store target classes for Keane metrics
     
-    for i, idx in enumerate(test_indices):
+    for i, idx in tqdm(enumerate(test_indices), total=n_instances, desc="Evaluating instances"):
         original_ts = dataset_test.X[idx]
         label = np.argmax(dataset_test.y[idx])
         target_class = 1 - label  # Binary classification

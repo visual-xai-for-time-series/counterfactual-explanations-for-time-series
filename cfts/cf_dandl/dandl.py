@@ -6,6 +6,21 @@ from sklearn.metrics import pairwise_distances
 import random
 
 
+####
+# MOC/DANDL: Multi-Objective Counterfactuals
+#
+# Paper: Dandl, S., Molnar, C., Binder, M., & Bischl, B. (2020).
+#        "Multi-objective counterfactual explanations."
+#        arXiv preprint arXiv:2004.11165
+#
+# Repository: https://github.com/susanne-207/moc
+#
+# MOC uses multi-objective evolutionary optimization to find Pareto-optimal
+# counterfactuals that balance validity, proximity, sparsity, and plausibility.
+# Returns multiple diverse counterfactuals on the Pareto frontier.
+####
+
+
 def moc_cf(
     sample: np.ndarray,
     dataset,

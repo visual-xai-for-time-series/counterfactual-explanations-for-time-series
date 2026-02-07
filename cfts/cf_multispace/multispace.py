@@ -4,6 +4,22 @@ import copy
 from captum.attr import GradientShap
 
 
+####
+# Multi-SpaCE: Multi-Objective Subsequence-based Sparse Counterfactual Explanations
+#
+# Paper: Refoyo, M., & Luengo, D. (2024).
+#        "Multi-SpaCE: Multi-Objective Subsequence-based Sparse Counterfactual Explanations
+#        for Multivariate Time Series Classification."
+#        arXiv preprint arXiv:2501.04009
+#
+# Repository: https://github.com/MarioRefoyo/Multi-SpaCE
+#
+# Multi-SpaCE uses feature importance for guided initialization, subsequence
+# optimization, and evolutionary search to generate diverse, sparse counterfactuals
+# for multivariate time series.
+####
+
+
 def detach_to_numpy(data):
     """Move pytorch data to cpu and detach it to numpy data."""
     return data.cpu().detach().numpy()

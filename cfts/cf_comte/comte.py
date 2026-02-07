@@ -5,6 +5,21 @@ import torch.optim as optim
 from typing import Optional, Tuple, Union, Dict, Any
 
 
+####
+# COMTE: Counterfactual Explanations for Multivariate Time Series
+#
+# Paper: Ates, E., Aksar, B., Leung, V. J., & Coskun, A. K. (2021).
+#        "Counterfactual Explanations for Multivariate Time Series."
+#        2021 International Conference on Applied Artificial Intelligence (ICAPAI)
+#
+# Repository: https://github.com/peaclab/CoMTE
+#
+# COMTE specializes in multivariate time series by optimizing each channel
+# independently when beneficial, incorporating smoothness and sparsity constraints
+# for interpretable counterfactual explanations.
+####
+
+
 def comte_cf(
     sample: np.ndarray,
     dataset,

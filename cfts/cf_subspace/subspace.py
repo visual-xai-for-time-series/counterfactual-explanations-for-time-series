@@ -1,11 +1,15 @@
 """
 Sub-SpaCE: Subsequence-based Sparse Counterfactual Explanations for Time Series Classification
 
-Based on the implementation from:
-https://github.com/MarioRefoyo/Sub-SpaCE
+Paper: Refoyo, M., & Luengo, D. (2023).
+       "Sub-SpaCE: Subsequence-based Sparse Counterfactual Explanations for Time Series Classification."
+       IEEE Transactions on Neural Networks and Learning Systems
+
+Repository: https://github.com/MarioRefoyo/Sub-SpaCE
 
 This module implements the Sub-SpaCE counterfactual explanation method for time series classification.
-It uses an evolutionary algorithm with subsequence-based representations to generate sparse counterfactuals.
+It uses an evolutionary algorithm with subsequence-based representations to generate sparse and
+interpretable counterfactuals, particularly designed for multivariate time series.
 """
 
 import torch
