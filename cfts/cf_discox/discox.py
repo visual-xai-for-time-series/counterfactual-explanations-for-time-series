@@ -359,11 +359,13 @@ def discox_cf(sample, dataset, model, target_class=None,
         # Find corresponding region in target prototype
         target_idx = mp_indices[discord_idx]
         # Bounds check: ensure target_idx is valid
+        # Also ensure window doesn't exceed array bounds
         if target_idx < 0 or target_idx >= len(X_target_c_sep):
             mp_values[discord_idx] = -np.inf
             continue
         
         target_start = target_idx
+        # Ensure target_end doesn't exceed array length
         target_end = min(target_idx + window_size, len(X_target_c_sep))
         
         # Map the discord region
@@ -380,20 +382,38 @@ def discox_cf(sample, dataset, model, target_class=None,
                 map_len = len(target_ts) - discord_start
             
             if map_len <= 0:
+                mp_values[discord_idx] = -np.inf
                 continue
             
-            # Extract target subsequence
-            target_subseq = X_target_c_sep[target_start:target_start + map_len]
+            # Ensure target_start + map_len is within bounds
+            actual_map_len = min(map_len, len(X_target_c_sep) - target_start)
+            if actual_map_len <= 0:
+                mp_values[discord_idx] = -np.inf
+                continue
+            
+            # Extract target subsequence with bounds checking
+            target_subseq = X_target_c_sep[target_start:target_start + actual_map_len]
             
             # Filter out NaN values from target
             valid_target = ~np.isnan(target_subseq)
             if np.any(valid_target):
-                target_ts[discord_start:discord_start + map_len][valid_target] = \
-                    target_subseq[valid_target]
-                mapping[discord_start:discord_start + map_len][valid_target] = \
-                    np.arange(target_start, target_start + map_len)[valid_target]
-                when_mapped[discord_start:discord_start + map_len][valid_target] = when
-                when += 1
+                # Ensure destination indices are within bounds
+                dest_len = min(actual_map_len, len(target_ts) - discord_start)
+                if dest_len <= 0:
+                    mp_values[discord_idx] = -np.inf
+                    continue
+                
+                # Adjust valid_target to match destination length
+                valid_target_adjusted = valid_target[:dest_len]
+                target_subseq_adjusted = target_subseq[:dest_len]
+                
+                if np.any(valid_target_adjusted):
+                    target_ts[discord_start:discord_start + dest_len][valid_target_adjusted] = \
+                        target_subseq_adjusted[valid_target_adjusted]
+                    mapping[discord_start:discord_start + dest_len][valid_target_adjusted] = \
+                        np.arange(target_start, target_start + dest_len)[valid_target_adjusted]
+                    when_mapped[discord_start:discord_start + dest_len][valid_target_adjusted] = when
+                    when += 1
         
         # Mark discord as processed
         mp_values[discord_idx] = -np.inf

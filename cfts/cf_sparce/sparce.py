@@ -49,7 +49,9 @@ class ResidualGeneratorLSTM(nn.Module):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         
-        self.lstm = nn.LSTM(input_dim, hidden_dim, layer_dim, batch_first=True, dropout=0.4, bidirectional=True)
+        # Only apply dropout if num_layers > 1
+        dropout = 0.4 if layer_dim > 1 else 0.0
+        self.lstm = nn.LSTM(input_dim, hidden_dim, layer_dim, batch_first=True, dropout=dropout, bidirectional=True)
         self.fc1 = nn.Linear(2 * hidden_dim, output_dim)
         self.fc2 = nn.Linear(2 * hidden_dim, output_dim)
         
@@ -85,7 +87,9 @@ class DiscriminatorLSTM(nn.Module):
         self.hidden_dim = hidden_dim
         self.layer_dim = layer_dim
         
-        self.lstm = nn.LSTM(input_dim, hidden_dim, layer_dim, batch_first=True, dropout=0.4, bidirectional=True)
+        # Only apply dropout if num_layers > 1
+        dropout = 0.4 if layer_dim > 1 else 0.0
+        self.lstm = nn.LSTM(input_dim, hidden_dim, layer_dim, batch_first=True, dropout=dropout, bidirectional=True)
         self.fc = nn.Linear(2 * hidden_dim, 1)
         self.act = nn.Sigmoid()
     

@@ -1,7 +1,7 @@
 """
-FordA Counterfactual Explanations Example
+ECG200 Counterfactual Explanations Example
 
-This example demonstrates counterfactual explanation generation for the FordA dataset
+This example demonstrates counterfactual explanation generation for the ECG200 dataset
 using various methods (Native Guide, COMTE, SETS, MOC, Wachter, GLACIER, Multi-SpaCE, 
 TSEvo, LASTS, and TSCF) with enhanced visualization.
 
@@ -67,8 +67,8 @@ import cfts.cf_cfwot.cfwot as cfwot
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 print('Loading dataset')
-dataloader_train, dataset_train = bd.get_UCR_UEA_dataloader(split='train')
-dataloader_test, dataset_test = bd.get_UCR_UEA_dataloader(split='test')
+dataloader_train, dataset_train = bd.get_UCR_UEA_dataloader(dataset_name='ECG200', split='train')
+dataloader_test, dataset_test = bd.get_UCR_UEA_dataloader(dataset_name='ECG200', split='test')
 
 output_classes = dataset_train.y_shape[1]
 input_length = dataset_train.X_shape[2]  # Get the time series length
@@ -78,7 +78,7 @@ model = bm.SimpleCNN(output_channels=output_classes, input_length=input_length).
 # --- model persistence: load if exists, otherwise train and save ---
 models_dir = os.path.abspath(os.path.join(script_path, '..', 'models'))
 os.makedirs(models_dir, exist_ok=True)
-model_file = os.path.join(models_dir, f'simple_cnn_forda_{output_classes}.pth')
+model_file = os.path.join(models_dir, f'simple_cnn_ecg200_{output_classes}.pth')
 
 model_loaded = False
 if os.path.exists(model_file):
@@ -949,7 +949,7 @@ def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
 
 n_rows = 55  # 1 original + 27 individual CFs + 27 overlays (includes CGM, SPARCE, CounTS, CFWoT)
 fig, axs = plt.subplots(n_rows, figsize=(10, 1.75 * n_rows))
-fig.suptitle('Counterfactual Explanations - FordA', y=0.998, fontsize=14)
+fig.suptitle('Counterfactual Explanations - ECG200', y=0.998, fontsize=14)
 
 i = 0
 # show true label from dataset and model prediction
@@ -1215,6 +1215,6 @@ i += 1
 overlay(axs[i], sample_pl, cf_cfwot_pl, 'CFWoT vs Original', pred_cfwot_str, success_cfwot)
 
 plt.tight_layout(rect=[0, 0.01, 1, 0.999])
-plt.savefig('counterfactuals_forda.png')
-print("\nPlot saved to 'counterfactuals_forda.png'. Exiting without displaying.")
+plt.savefig('counterfactuals_ecg200.png')
+print("\nPlot saved to 'counterfactuals_ecg200.png'. Exiting without displaying.")
 # plt.show()  # Disabled to prevent plot display

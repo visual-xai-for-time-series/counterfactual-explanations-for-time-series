@@ -13,48 +13,82 @@ class AbstractModel:
 
 
 class SimpleCNN(nn.Module):
-    def __init__(self, output_channels=2):
+    def __init__(self, output_channels=2, input_length=500):
         super(SimpleCNN, self).__init__()
 
-        # Define the first convolutional layer
+        # Define the first convolutional layer with batch normalization
         self.conv1 = nn.Sequential(
-            # 1 input channel, 9 output channels, kernel size 3, stride 2
-            nn.Conv1d(1, 9, kernel_size=3, stride=2),
-            nn.ReLU(inplace=True)  # Apply ReLU activation function
+            nn.Conv1d(1, 16, kernel_size=5, stride=2, padding=2),
+            nn.BatchNorm1d(16),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1)
         )
 
-        # Define the second convolutional layer
+        # Define the second convolutional layer with batch normalization
         self.conv2 = nn.Sequential(
-            # 9 input channels, 18 output channels, kernel size 3, stride 2
-            nn.Conv1d(9, 18, kernel_size=3, stride=2),
-            nn.ReLU(inplace=True)  # Apply ReLU activation function
+            nn.Conv1d(16, 32, kernel_size=5, stride=2, padding=2),
+            nn.BatchNorm1d(32),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1)
         )
 
-        # Define the third convolutional layer
+        # Define the third convolutional layer with batch normalization
         self.conv3 = nn.Sequential(
-            # 18 input channels, 36 output channels, kernel size 3, stride 2
-            nn.Conv1d(18, 36, kernel_size=3, stride=2),
-            nn.ReLU(inplace=True)  # Apply ReLU activation function
+            nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2)
+        )
+        
+        # Define the fourth convolutional layer
+        self.conv4 = nn.Sequential(
+            nn.Conv1d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2)
         )
 
+        # Calculate the output size after convolutions
+        conv_output_size = self._calculate_conv_output_size(input_length)
+        
         # Define the first fully-connected layer
         self.fc1 = nn.Sequential(
-            nn.Linear(36 * 61, 100),  # 36 * 61 input features, 100 output features
-            nn.Dropout(0.5),  # Apply dropout with rate 0.5
-            nn.ReLU(inplace=True)  # Apply ReLU activation function
+            nn.Linear(conv_output_size, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.4)
         )
-
+        
         # Define the second fully-connected layer
         self.fc2 = nn.Sequential(
-            nn.Linear(100, output_channels),  # 100 input features, configurable output features
-            nn.Softmax(dim=1)  # Apply softmax activation function along the correct dimension
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3)
         )
+
+        # Define the output layer with softmax
+        self.fc3 = nn.Sequential(
+            nn.Linear(128, output_channels),
+            nn.Softmax(dim=1)
+        )
+
+    def _calculate_conv_output_size(self, input_length):
+        """Calculate the flattened output size after all convolutional layers."""
+        # Simulate forward pass through conv layers
+        x = torch.randn(1, 1, input_length)
+        x = self.conv1[0](x)  # Just the conv layer
+        x = self.conv2[0](x)
+        x = self.conv3[0](x)
+        x = self.conv4[0](x)
+        return x.shape[1] * x.shape[2]  # channels * length
 
     def forward(self, x):
         # Pass the input through the convolutional layers
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
+        x = self.conv4(x)
 
         # Flatten the output of the convolutional layers for input to the fully-connected layers
         batch_size = x.shape[0]
@@ -63,6 +97,7 @@ class SimpleCNN(nn.Module):
         # Pass the output through the fully-connected layers
         x = self.fc1(x)
         x = self.fc2(x)
+        x = self.fc3(x)
 
         return x
 

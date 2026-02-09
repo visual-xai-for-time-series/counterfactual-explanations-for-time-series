@@ -209,14 +209,16 @@ def _assess_candidate_quality(distances, labels):
     return best_gain
 
 
-def mine_motifs_stumpy(dataset, lengths_ratio=[0.3, 0.5, 0.7], top_k=10, verbose=False):
+def mine_motifs_stumpy(dataset, lengths_ratio=[0.1, 0.15, 0.2], top_k=10, verbose=False):
     """Mine discriminative motifs using STUMPY's matrix profile for efficient discovery.
     
     This is an optimized version of Algorithm 1 from the MG-CF paper using matrix profiles.
     
     Args:
         dataset: List/array of (x, y) tuples where x is time series and y is binary label
-        lengths_ratio: Ratios of time series length to use for motif lengths
+        lengths_ratio: Ratios of time series length to use for motif lengths (default: [0.1, 0.15, 0.2])
+                      These are conservative values to avoid STUMPY warnings about window size.
+                      For a 1000-point series, this gives windows of 100, 150, and 200.
         top_k: Number of top candidate subsequences to evaluate per length (default 10)
         verbose: Whether to print progress
         
@@ -245,7 +247,16 @@ def mine_motifs_stumpy(dataset, lengths_ratio=[0.3, 0.5, 0.7], top_k=10, verbose
         sample_ts = detach_to_numpy(sample_ts)
     
     ts_length = len(sample_ts) if sample_ts.ndim == 1 else sample_ts.shape[-1]
-    lengths = [int(ts_length * ratio) for ratio in lengths_ratio]
+    
+    # Calculate lengths and ensure they don't exceed recommended maximum (25% of series length)
+    max_safe_length = int(ts_length * 0.25)
+    lengths = [min(int(ts_length * ratio), max_safe_length) for ratio in lengths_ratio]
+    
+    # Ensure minimum window size of at least 4 (STUMPY requirement)
+    lengths = [max(length, 4) for length in lengths]
+    
+    # Remove duplicates and sort
+    lengths = sorted(list(set(lengths)))
     
     if verbose:
         print(f"MG-CF STUMPY: Extracting motifs of lengths {lengths} from {len(X)} time series")
@@ -338,7 +349,7 @@ def mine_motifs_stumpy(dataset, lengths_ratio=[0.3, 0.5, 0.7], top_k=10, verbose
 
 
 def mg_cf_generate_stumpy(sample, dataset, model, motifs=None, target=None, 
-                          lengths_ratio=[0.3, 0.5, 0.7], top_k=10, verbose=False):
+                          lengths_ratio=[0.1, 0.15, 0.2], top_k=10, verbose=False):
     """Generate counterfactual explanation using STUMPY-based Motif-Guided approach.
     
     This implements Algorithm 2 from the MG-CF paper using matrix profiles for
@@ -350,7 +361,7 @@ def mg_cf_generate_stumpy(sample, dataset, model, motifs=None, target=None,
         model: Trained classifier model
         motifs: Pre-mined motifs (if None, will mine from dataset using STUMPY)
         target: Target class for counterfactual (if None, will use opposite of prediction)
-        lengths_ratio: Ratios for motif lengths if mining is needed
+        lengths_ratio: Ratios for motif lengths if mining is needed (default: [0.1, 0.15, 0.2])
         top_k: Number of top candidates to evaluate per motif length
         verbose: Whether to print debug information
         
@@ -457,7 +468,7 @@ def mg_cf_generate_stumpy(sample, dataset, model, motifs=None, target=None,
 
 
 def mg_cf_batch_stumpy(samples, dataset, model, motifs=None, target=None,
-                       lengths_ratio=[0.3, 0.5, 0.7], top_k=10, verbose=False):
+                       lengths_ratio=[0.1, 0.15, 0.2], top_k=10, verbose=False):
     """Generate counterfactual explanations for a batch using STUMPY-based approach.
     
     Args:
@@ -466,7 +477,7 @@ def mg_cf_batch_stumpy(samples, dataset, model, motifs=None, target=None,
         model: Trained classifier model
         motifs: Pre-mined motifs (if None, will mine once and reuse)
         target: Target class (if None, will determine per sample)
-        lengths_ratio: Ratios for motif lengths
+        lengths_ratio: Ratios for motif lengths (default: [0.1, 0.15, 0.2])
         top_k: Number of top candidates per length
         verbose: Whether to print progress
         
