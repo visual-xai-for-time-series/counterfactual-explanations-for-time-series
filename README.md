@@ -41,14 +41,15 @@ python metrics_evaluation_example.py  # Comprehensive metrics
 
 ## Implemented Algorithms
 
-This library implements **19+ state-of-the-art counterfactual explanation methods** for time series classification, organized into:
+This library implements **27 state-of-the-art counterfactual explanation methods** for time series classification, organized into:
 
-- **Optimization-Based Methods**: Wachter, COMTE, GLACIER, TSCF
+- **Optimization-Based Methods**: Wachter, COMTE, TSCF
 - **Evolutionary Methods**: MOC/DANDL, TSEvo, Multi-SpaCE, Sub-SpaCE
-- **Instance-Based Methods**: Native Guide, CELS
-- **Latent Space Methods**: Latent CF, LASTS
-- **Segment-Based Methods**: SETS, SG-CF, DisCOX
-- **Hybrid Methods**: Time-CF, FastPACE, MG-CF, TimeX
+- **Instance-Based Methods**: Native Guide, CELS/M-CELS, AB-CF
+- **Latent Space Methods**: CGM, CounTS, Latent-CF, LASTS, GLACIER
+- **Segment-Based Methods**: SETS, SG-CF, DisCOX, CFWoT
+- **Frequency-Domain Methods**: FFT-CF
+- **Hybrid Methods**: SPARCE, Time-CF, TeRCE, MG-CF, TimeX, TimeX++
 
 📚 **For detailed descriptions, key features, academic references, and code examples for each method, see [REFERENCES.md](REFERENCES.md)**
 
@@ -241,6 +242,8 @@ Released under MIT License. See the LICENSE file for details.
 
 ## References and Citations
 
+If you use the library, please cite one of the following sources (the second one is preferred).
+
 ### Core Library Citation
 ```bibtex
 @software{cfts-us-2025,
@@ -248,6 +251,16 @@ Released under MIT License. See the LICENSE file for details.
   title = {Counterfactual Explanation Algorithms for Time Series Models},
   url = {https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series},
   year = {2025}
+}
+```
+
+### Reference Paper Citation
+```bibtex
+@inproceedings{schlegel_what-if_2026,
+  title={What-If Explanations Over Time: Counterfactuals for Time Series Classification},
+  author={Schlegel, Udo and Seidl, Thomas},
+  booktitle={World Conference on Explainable Artificial Intelligence (XAI)},
+  year={2026}
 }
 ```
 

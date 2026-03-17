@@ -61,6 +61,9 @@ import cfts.cf_ab_cf.ab_cf as ab_cf
 from cfts.cf_sparce.sparce import sparce_gan_cf
 from cfts.cf_counts.counts import counts_cf_with_pretrained_model
 import cfts.cf_cfwot.cfwot as cfwot
+import cfts.cf_cem.cem as cem_mod
+import cfts.cf__abstract.abstract as abstract_mod
+import cfts.cf_ts_tweaking.ts_tweaking as ts_tweaking
 
 
 
@@ -257,7 +260,9 @@ methods = [
     'Wachter Gradient', 'Wachter Genetic', 'GLACIER', 'Multi-SpaCE', 
     'Sub-SpaCE', 'TSEvo', 'LASTS', 'TSCF', 'FASTPACE', 'TIME-CF', 
     'SG-CF', 'MG-CF', 'Latent-CF', 'CGM', 'DiSCoX', 'CELS', 
-    'FFT-CF', 'TERCE', 'AB-CF', 'SPARCE', 'CounTS', 'CFWoT'
+    'FFT-CF', 'TERCE', 'AB-CF', 'SPARCE', 'CounTS', 'CFWoT', 'CEM-PN',
+    'Abstract-CF',
+    'TS-Tweaking-kNN', 'TS-Tweaking-Irrev', 'TS-Tweaking-Rev',
 ]
 
 # Initialize progress bar
@@ -753,6 +758,92 @@ except Exception as e:
 finally:
     progress.update(1)
 
+print('Start with CEM-PN (Contrastive Explanation Method – Pertinent Negative)')
+start_time = time.time()
+try:
+    cf_cem_pn, prediction_cem_pn = cem_mod.cem_cf(
+        sample, model,
+        mode='PN',
+        autoencoder=None,
+        kappa=0.5,
+        beta=0.1,
+        gamma=0.2,
+        c_init=10.0,
+        c_steps=5,
+        max_iterations=500,
+        learning_rate=1e-2,
+        verbose=False,
+    )
+    timing_results['CEM-PN'] = time.time() - start_time
+    print(f'CEM-PN completed in {timing_results["CEM-PN"]:.3f} seconds')
+except Exception as e:
+    cf_cem_pn, prediction_cem_pn = None, None
+    timing_results['CEM-PN'] = time.time() - start_time
+    print(f'CEM-PN failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
+print('Start with Abstract-CF (reference / template implementation)')
+start_time = time.time()
+try:
+    cf_abstract, prediction_abstract = abstract_mod.abstract_cf(
+        sample, model,
+        max_iter=200,
+        noise_scale=0.05,
+        escalate_every=10,
+        verbose=False,
+    )
+    timing_results['Abstract-CF'] = time.time() - start_time
+    print(f'Abstract-CF completed in {timing_results["Abstract-CF"]:.3f} seconds')
+except Exception as e:
+    cf_abstract, prediction_abstract = None, None
+    timing_results['Abstract-CF'] = time.time() - start_time
+    print(f'Abstract-CF failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
+print('Start with TS-Tweaking kNN (τ_NN)')
+start_time = time.time()
+try:
+    cf_ts_tweak_knn, prediction_ts_tweak_knn = ts_tweaking.ts_tweaking_knn_cf(
+        sample, dataset_train, model, target=target_class, verbose=False)
+    timing_results['TS-Tweaking-kNN'] = time.time() - start_time
+    print(f'TS-Tweaking-kNN completed in {timing_results["TS-Tweaking-kNN"]:.3f} seconds')
+except Exception as e:
+    cf_ts_tweak_knn, prediction_ts_tweak_knn = None, None
+    timing_results['TS-Tweaking-kNN'] = time.time() - start_time
+    print(f'TS-Tweaking-kNN failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
+print('Start with TS-Tweaking Irreversible (τ_SF)')
+start_time = time.time()
+try:
+    cf_ts_tweak_irrev, prediction_ts_tweak_irrev = ts_tweaking.ts_tweaking_irreversible_cf(
+        sample, dataset_train, model, target=target_class, verbose=False)
+    timing_results['TS-Tweaking-Irrev'] = time.time() - start_time
+    print(f'TS-Tweaking-Irrev completed in {timing_results["TS-Tweaking-Irrev"]:.3f} seconds')
+except Exception as e:
+    cf_ts_tweak_irrev, prediction_ts_tweak_irrev = None, None
+    timing_results['TS-Tweaking-Irrev'] = time.time() - start_time
+    print(f'TS-Tweaking-Irrev failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
+print('Start with TS-Tweaking Reversible (τ_SF-R)')
+start_time = time.time()
+try:
+    cf_ts_tweak_rev, prediction_ts_tweak_rev = ts_tweaking.ts_tweaking_reversible_cf(
+        sample, dataset_train, model, target=target_class, verbose=False)
+    timing_results['TS-Tweaking-Rev'] = time.time() - start_time
+    print(f'TS-Tweaking-Rev completed in {timing_results["TS-Tweaking-Rev"]:.3f} seconds')
+except Exception as e:
+    cf_ts_tweak_rev, prediction_ts_tweak_rev = None, None
+    timing_results['TS-Tweaking-Rev'] = time.time() - start_time
+    print(f'TS-Tweaking-Rev failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
 # Close the progress bar
 progress.close()
 
@@ -809,6 +900,11 @@ print(format_combined_result('AB-CF', prediction_ab_cf, timing_results['AB-CF'])
 print(format_combined_result('SPARCE', prediction_sparce, timing_results['SPARCE']))
 print(format_combined_result('CounTS', prediction_counts, timing_results['CounTS']))
 print(format_combined_result('CFWoT', prediction_cfwot, timing_results['CFWoT']))
+print(format_combined_result('CEM-PN', prediction_cem_pn, timing_results['CEM-PN']))
+print(format_combined_result('Abstract-CF', prediction_abstract, timing_results['Abstract-CF']))
+print(format_combined_result('TS-Tweaking-kNN', prediction_ts_tweak_knn, timing_results['TS-Tweaking-kNN']))
+print(format_combined_result('TS-Tweaking-Irrev', prediction_ts_tweak_irrev, timing_results['TS-Tweaking-Irrev']))
+print(format_combined_result('TS-Tweaking-Rev', prediction_ts_tweak_rev, timing_results['TS-Tweaking-Rev']))
 print('='*80)
 print()
 
@@ -853,6 +949,11 @@ cf_ab_cf_pl = None if cf_ab_cf is None else _to_channel_first(cf_ab_cf)
 cf_sparce_pl = None if cf_sparce is None else _to_channel_first(cf_sparce)
 cf_counts_pl = None if cf_counts is None else _to_channel_first(cf_counts)
 cf_cfwot_pl = None if cf_cfwot is None else _to_channel_first(cf_cfwot)
+cf_cem_pn_pl = None if cf_cem_pn is None else _to_channel_first(cf_cem_pn)
+cf_abstract_pl = None if cf_abstract is None else _to_channel_first(cf_abstract)
+cf_ts_tweak_knn_pl = None if cf_ts_tweak_knn is None else _to_channel_first(cf_ts_tweak_knn)
+cf_ts_tweak_irrev_pl = None if cf_ts_tweak_irrev is None else _to_channel_first(cf_ts_tweak_irrev)
+cf_ts_tweak_rev_pl = None if cf_ts_tweak_rev is None else _to_channel_first(cf_ts_tweak_rev)
 
 def _fmt_pred(pred):
     """Format a model prediction array into 'label (conf)' or 'None'."""
@@ -896,6 +997,11 @@ pred_ab_cf_str = _fmt_pred(prediction_ab_cf)
 pred_sparce_str = _fmt_pred(prediction_sparce)
 pred_counts_str = _fmt_pred(prediction_counts)
 pred_cfwot_str = _fmt_pred(prediction_cfwot)
+pred_cem_pn_str = _fmt_pred(prediction_cem_pn)
+pred_abstract_str = _fmt_pred(prediction_abstract)
+pred_ts_tweak_knn_str = _fmt_pred(prediction_ts_tweak_knn)
+pred_ts_tweak_irrev_str = _fmt_pred(prediction_ts_tweak_irrev)
+pred_ts_tweak_rev_str = _fmt_pred(prediction_ts_tweak_rev)
 pred_original_str = _fmt_pred(original_pred_np)
 
 def _check_success(pred, target):
@@ -934,6 +1040,11 @@ success_ab_cf = _check_success(prediction_ab_cf, target_class)
 success_sparce = _check_success(prediction_sparce, target_class)
 success_counts = _check_success(prediction_counts, target_class)
 success_cfwot = _check_success(prediction_cfwot, target_class)
+success_cem_pn = _check_success(prediction_cem_pn, target_class)
+success_abstract = _check_success(prediction_abstract, target_class)
+success_ts_tweak_knn = _check_success(prediction_ts_tweak_knn, target_class)
+success_ts_tweak_irrev = _check_success(prediction_ts_tweak_irrev, target_class)
+success_ts_tweak_rev = _check_success(prediction_ts_tweak_rev, target_class)
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     """Plot each channel on ax. arr is (C, L). styles can be list of kwargs per channel."""
@@ -947,7 +1058,7 @@ def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     if C > 1:
         ax.legend([f'channel:{i}' for i in range(C)], loc='upper right', fontsize='small')
 
-n_rows = 55  # 1 original + 27 individual CFs + 27 overlays (includes CGM, SPARCE, CounTS, CFWoT)
+n_rows = 65  # 1 original + 32 individual CFs + 32 overlays (includes Abstract-CF + 3 TS-Tweaking)
 fig, axs = plt.subplots(n_rows, figsize=(10, 1.75 * n_rows))
 fig.suptitle('Counterfactual Explanations - FordA', y=0.998, fontsize=14)
 
@@ -1148,6 +1259,41 @@ else:
     axs[i].set_title('CFWoT [✗ FAILED]')
 i += 1
 
+if cf_cem_pn_pl is not None:
+    status = '✓' if success_cem_pn else '✗'
+    plot_channels(axs[i], cf_cem_pn_pl, f'CEM-PN [{status}] — pred: {pred_cem_pn_str}')
+else:
+    axs[i].set_title('CEM-PN [✗ FAILED]')
+i += 1
+
+if cf_abstract_pl is not None:
+    status = '✓' if success_abstract else '✗'
+    plot_channels(axs[i], cf_abstract_pl, f'Abstract-CF [{status}] — pred: {pred_abstract_str}')
+else:
+    axs[i].set_title('Abstract-CF [✗ FAILED]')
+i += 1
+
+if cf_ts_tweak_knn_pl is not None:
+    status = '✓' if success_ts_tweak_knn else '✗'
+    plot_channels(axs[i], cf_ts_tweak_knn_pl, f'TS-Tweaking-kNN [{status}] — pred: {pred_ts_tweak_knn_str}')
+else:
+    axs[i].set_title('TS-Tweaking-kNN [✗ FAILED]')
+i += 1
+
+if cf_ts_tweak_irrev_pl is not None:
+    status = '✓' if success_ts_tweak_irrev else '✗'
+    plot_channels(axs[i], cf_ts_tweak_irrev_pl, f'TS-Tweaking-Irrev [{status}] — pred: {pred_ts_tweak_irrev_str}')
+else:
+    axs[i].set_title('TS-Tweaking-Irrev [✗ FAILED]')
+i += 1
+
+if cf_ts_tweak_rev_pl is not None:
+    status = '✓' if success_ts_tweak_rev else '✗'
+    plot_channels(axs[i], cf_ts_tweak_rev_pl, f'TS-Tweaking-Rev [{status}] — pred: {pred_ts_tweak_rev_str}')
+else:
+    axs[i].set_title('TS-Tweaking-Rev [✗ FAILED]')
+i += 1
+
 # overlay plots: counterfactual vs original
 def overlay(ax, base, other, title, pred_str=None, is_success=False):
     if other is None:
@@ -1213,6 +1359,16 @@ i += 1
 overlay(axs[i], sample_pl, cf_counts_pl, 'CounTS vs Original', pred_counts_str, success_counts)
 i += 1
 overlay(axs[i], sample_pl, cf_cfwot_pl, 'CFWoT vs Original', pred_cfwot_str, success_cfwot)
+i += 1
+overlay(axs[i], sample_pl, cf_cem_pn_pl, 'CEM-PN vs Original', pred_cem_pn_str, success_cem_pn)
+i += 1
+overlay(axs[i], sample_pl, cf_abstract_pl, 'Abstract-CF vs Original', pred_abstract_str, success_abstract)
+i += 1
+overlay(axs[i], sample_pl, cf_ts_tweak_knn_pl, 'TS-Tweaking-kNN vs Original', pred_ts_tweak_knn_str, success_ts_tweak_knn)
+i += 1
+overlay(axs[i], sample_pl, cf_ts_tweak_irrev_pl, 'TS-Tweaking-Irrev vs Original', pred_ts_tweak_irrev_str, success_ts_tweak_irrev)
+i += 1
+overlay(axs[i], sample_pl, cf_ts_tweak_rev_pl, 'TS-Tweaking-Rev vs Original', pred_ts_tweak_rev_str, success_ts_tweak_rev)
 
 plt.tight_layout(rect=[0, 0.01, 1, 0.999])
 plt.savefig('counterfactuals_forda.png')

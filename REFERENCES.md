@@ -155,48 +155,7 @@ cf, prediction = comte_generate(
 
 ---
 
-#### 3. GLACIER - Guided Locally Constrained Counterfactuals (2024)
-**Implementation:** `cfts/cf_glacier/glacier.py`
-
-**Description:** Advanced counterfactual generation with enhanced realism constraints, similarity preservation, and robust optimization for complex time series patterns.
-
-**Key Features:**
-- **Realism focus**: Incorporates domain-specific constraints
-- **Similarity preservation**: Maintains statistical properties of original data
-- **Robust optimization**: Handles noisy and complex time series patterns
-
-**Reference:**
-```bibtex
-@article{wang2024glacier,
-  title={Glacier: Guided locally constrained counterfactual explanations for time series classification},
-  author={Wang, Zhendong and Samsten, Isak and Miliou, Ioanna and Mochaourab, Rami and Papapetrou, Panagiotis},
-  journal={Machine Learning},
-  year={2024},
-  publisher={Springer}
-}
-```
-
-**Links:**
-- Repository: [https://github.com/zhendong3wang/learning-time-series-counterfactuals](https://github.com/zhendong3wang/learning-time-series-counterfactuals)
-
-**Usage Example:**
-```python
-from cfts.cf_glacier import glacier_cf
-
-cf, prediction = glacier_cf(
-    sample=sample,
-    dataset=dataset,
-    model=model,
-    target_class=1,
-    lambda_l1=0.01,
-    lambda_l2=0.1,
-    max_iterations=2000
-)
-```
-
----
-
-#### 4. TSCF - Time Series CounterFactuals (Custom)
+#### 3. TSCF - Time Series CounterFactuals (Custom)
 **Implementation:** `cfts/cf_tscf/tscf.py`
 
 **Description:** Gradient-based optimization with temporal smoothness constraints for generating realistic counterfactual explanations.
@@ -217,6 +176,73 @@ cf, prediction = tscf_cf(
     lambda_smooth=0.001,
     learning_rate=0.1,
     max_iterations=2000
+)
+```
+
+---
+
+#### 4. TS-Tweaking - Locally and Globally Explainable Time Series Tweaking (2020)
+**Implementation:** `cfts/cf_ts_tweaking/ts_tweaking.py`
+
+**Description:** Three complementary algorithms for generating counterfactual explanations by tweaking time series segments. The global method (τ_NN) uses k-NN with k-means clustering to find the minimal transformation that changes the prediction; the local irreversible method (τ_SF) uses a shapelet forest to push subsequences past decision thresholds; the local reversible method (τ_SF-R) constrains modifications within the threshold sphere for conservative changes.
+
+**Key Features:**
+- **Three variants**: Global (τ_NN), Local Irreversible (τ_SF), and Local Reversible (τ_SF-R)
+- **k-NN with k-means clustering**: Finds optimal target instances via nearest-neighbor search
+- **Shapelet-based approach**: Identifies discriminative subsequences driving the prediction
+- **Reversible option**: Conservative modifications that remain within shapelet distance bounds
+- **Interpretable changes**: Segment-level tweaks produce easily understandable explanations
+
+**Reference:**
+```bibtex
+@article{karlsson2020locally,
+  title={Locally and globally explainable time series tweaking},
+  author={Karlsson, Isak and Rebane, Jonathan and Papapetrou, Panagiotis and Gionis, Aristides},
+  journal={Knowledge and Information Systems},
+  volume={62},
+  pages={1671--1700},
+  year={2020},
+  publisher={Springer}
+}
+```
+
+**Links:**
+- Paper: [Springer KAIS](https://link.springer.com/article/10.1007/s10115-019-01389-4)
+- ArXiv: [arXiv:1809.05183](https://arxiv.org/abs/1809.05183)
+
+**Usage Example:**
+```python
+from cfts.cf_ts_tweaking.ts_tweaking import (
+    ts_tweaking_knn_cf,
+    ts_tweaking_irreversible_cf,
+    ts_tweaking_reversible_cf,
+)
+
+# Global tweaking via k-NN with k-means
+cf, prediction = ts_tweaking_knn_cf(
+    sample=sample,
+    dataset=dataset,
+    model=model,
+    target=1,
+    k=5,
+    n_clusters=5,
+    alpha_steps=20
+)
+
+# Local irreversible tweaking (shapelet-based)
+cf, prediction = ts_tweaking_irreversible_cf(
+    sample=sample,
+    dataset=dataset,
+    model=model,
+    target=1
+)
+
+# Local reversible tweaking (shapelet-based, conservative)
+cf, prediction = ts_tweaking_reversible_cf(
+    sample=sample,
+    dataset=dataset,
+    model=model,
+    target=1
 )
 ```
 
@@ -612,7 +638,49 @@ cf, cf_label = ab_cf_generate(
 
 ### Latent Space Methods
 
-#### 12. CGM - Conditional Generative Models for Counterfactuals (2021)
+#### 12. GLACIER - Guided Locally Constrained Counterfactuals (2024)
+**Implementation:** `cfts/cf_glacier/glacier.py`
+
+**Description:** Advanced counterfactual generation with enhanced realism constraints, similarity preservation, and robust optimization for complex time series patterns using latent space representations.
+
+**Key Features:**
+- **Latent space optimization**: Searches in compressed latent representation for efficient counterfactual generation
+- **Realism focus**: Incorporates domain-specific constraints
+- **Similarity preservation**: Maintains statistical properties of original data
+- **Robust optimization**: Handles noisy and complex time series patterns
+
+**Reference:**
+```bibtex
+@article{wang2024glacier,
+  title={Glacier: Guided locally constrained counterfactual explanations for time series classification},
+  author={Wang, Zhendong and Samsten, Isak and Miliou, Ioanna and Mochaourab, Rami and Papapetrou, Panagiotis},
+  journal={Machine Learning},
+  year={2024},
+  publisher={Springer}
+}
+```
+
+**Links:**
+- Repository: [https://github.com/zhendong3wang/learning-time-series-counterfactuals](https://github.com/zhendong3wang/learning-time-series-counterfactuals)
+
+**Usage Example:**
+```python
+from cfts.cf_glacier import glacier_cf
+
+cf, prediction = glacier_cf(
+    sample=sample,
+    dataset=dataset,
+    model=model,
+    target_class=1,
+    lambda_l1=0.01,
+    lambda_l2=0.1,
+    max_iterations=2000
+)
+```
+
+---
+
+#### 13. CGM - Conditional Generative Models for Counterfactuals (2021)
 **Implementation:** `cfts/cf_cgm/cgm.py`
 
 **Description:** Uses conditional generative models (e.g., conditional VAE/GAN) to generate sparse, in-distribution counterfactual explanations. The approach generates counterfactuals by conditioning a generative model on the desired target prediction, allowing batches of counterfactuals to be generated with a single forward pass.
@@ -678,7 +746,7 @@ cf, prediction = cgm_generate(
 
 ---
 
-#### 13. CounTS - Counterfactual Time Series (2023)
+#### 14. CounTS - Counterfactual Time Series (2023)
 **Implementation:** `cfts/cf_counts/counts.py`
 
 **Description:** Self-interpretable time series prediction model with counterfactual explanations. Unlike post-hoc methods, CounTS is built on a structural causal model (SCM) that performs counterfactual reasoning through abduction, action, and prediction steps for causally plausible explanations.
@@ -742,7 +810,7 @@ cf, prediction = counts_generate(
 
 ---
 
-#### 14. Latent-CF - Latent Space Counterfactuals (2020)
+#### 15. Latent-CF - Latent Space Counterfactuals (2020)
 **Implementation:** `cfts/cf_latent_cf/latent_cf.py`
 
 **Description:** Simple autoencoder-based approach that projects time series into latent space, optimizes in latent space, then projects back to original space for improved efficiency and interpretability. This method uses gradient descent in the latent space of an autoencoder to generate counterfactuals that are more in-distribution, sparse, and computationally efficient.
@@ -784,7 +852,7 @@ cf, prediction = latent_cf_generate(
 
 ---
 
-#### 15. LASTS - Local Agnostic Subsequence-based Time Series Explainer (2020)
+#### 16. LASTS - Local Agnostic Subsequence-based Time Series Explainer (2020)
 **Implementation:** `cfts/cf_lasts/lasts.py`
 
 **Description:** Comprehensive explainability method that provides factual and counterfactual subsequence-based rules, exemplar and counterexemplar time series, and shapelet-based decision tree explanations. LASTS uses an autoencoder to project time series into latent space, generates a neighborhood using genetic algorithms, trains a shapelet-based decision tree surrogate model, and extracts interpretable rules and exemplar/counterexemplar instances.
@@ -863,7 +931,7 @@ print(f"Closest counterfactual: {explanation['closest_counterfactual']}")
 
 ### Segment-Based Methods
 
-#### 16. SETS - Shapelet-Based Counterfactual Explanations (2022)
+#### 17. SETS - Shapelet-Based Counterfactual Explanations (2022)
 **Implementation:** `cfts/cf_sets/sets.py`  
 **Paper:** "Shapelet-Based Counterfactual Explanations for Multivariate Time Series"  
 **Authors:** Omar Bahri, Soukaina Filali Boubrahimi, Shah Muhammad Hamdi  
@@ -925,7 +993,7 @@ explanation = sets_explain(
 
 ---
 
-#### 17. SG-CF - Shapelet-Guided Counterfactual Explanations (2022)
+#### 18. SG-CF - Shapelet-Guided Counterfactual Explanations (2022)
 **Implementation:** `cfts/cf_sg_cf/sg_cf.py`  
 **Paper:** "SG-CF: Shapelet-Guided Counterfactual Explanation for Time Series Classification"  
 **Authors:** Peiyu Li, Omar Bahri, Soukaina Filali Boubrahimi, Shah Muhammad Hamdi  
@@ -996,7 +1064,7 @@ print(f"Success: {explanation['success']}")
 
 ---
 
-#### 18. DisCOX - Discord-based Counterfactual Explanations (2024)
+#### 19. DisCOX - Discord-based Counterfactual Explanations (2024)
 **Implementation:** `cfts/cf_discox/discox.py`  
 **Paper:** "Discord-based counterfactual explanations for time series classification"  
 **Authors:** Omar Bahri, Peiyu Li, Soukaina Filali Boubrahimi, Shah Muhammad Hamdi  
@@ -1084,7 +1152,7 @@ print(f"Success: {explanation['success']}")
 
 ---
 
-#### 19. CFWoT - Counterfactual Explanations Without Training Datasets (2024)
+#### 20. CFWoT - Counterfactual Explanations Without Training Datasets (2024)
 **Implementation:** `cfts/cf_cfwot/cfwot.py`
 
 **Description:** Reinforcement learning-based counterfactual explanation method for both static and multivariate time-series data. CFWoT operates without requiring training datasets and is model-agnostic, supporting both differentiable and non-differentiable models.
@@ -1146,9 +1214,79 @@ cf, prediction = cfwot(
 
 ---
 
+#### 21. TS-CEM - Contrastive Explanation Method for Time Series (2020)
+**Implementation:** `cfts/cf_cem/cem.py`
+
+**Description:** Applies the Contrastive Explanation Method (CEM) to time series classification, finding Pertinent Negatives (PN) that change the model's prediction or Pertinent Positives (PP) that preserve it. Optimization is performed via FISTA with L1/L2 regularization and an optional autoencoder reconstruction loss.
+
+**Key Features:**
+- **Pertinent Negatives (PN)**: Minimal additions to the input that flip the model's prediction
+- **Pertinent Positives (PP)**: Minimal subset of the input that preserves the prediction
+- **FISTA optimization**: Fast iterative shrinkage-thresholding for sparse solutions
+- **Autoencoder support**: Optional reconstruction loss encourages in-distribution counterfactuals
+- **Binary search**: Automatically tunes the confidence penalty constant *c*
+
+**References:**
+```bibtex
+@inproceedings{labaien2020contrastive,
+  title={Contrastive Explanations for a Deep Learning Model on Time-Series Data},
+  author={Labaien, Jokin and Zugasti, Ekhi and De Carlos, Xabier},
+  booktitle={Big Data Analytics and Knowledge Discovery (DaWaK 2020)},
+  series={Lecture Notes in Computer Science},
+  volume={12393},
+  pages={190--204},
+  year={2020},
+  publisher={Springer}
+}
+
+@inproceedings{dhurandhar2018explanations,
+  title={Explanations based on the missing: Towards contrastive explanations with pertinent negatives},
+  author={Dhurandhar, Amit and Chen, Pin-Yu and Luss, Ronny and Tu, Chun-Chen and Ting, Paishun and Shanmugam, Karthikeyan and Das, Payel},
+  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
+  volume={31},
+  year={2018}
+}
+```
+
+**Links:**
+- Paper: [Springer DaWaK 2020](https://doi.org/10.1007/978-3-030-59065-9_19)
+- Original CEM (IBM): [https://github.com/IBM/Contrastive-Explanation-Method](https://github.com/IBM/Contrastive-Explanation-Method)
+
+**Usage Example:**
+```python
+from cfts.cf_cem.cem import cem_cf
+
+# Pertinent Negative (PN) – find minimal addition that flips prediction
+cf, prediction = cem_cf(
+    sample=sample,
+    model=model,
+    mode='PN',
+    autoencoder=None,
+    kappa=0.5,
+    beta=0.1,
+    gamma=0.2,
+    c_init=10.0,
+    c_steps=5,
+    max_iterations=500,
+    learning_rate=1e-2
+)
+
+# Pertinent Positive (PP) – find minimal subset that preserves prediction
+cf, prediction = cem_cf(
+    sample=sample,
+    model=model,
+    mode='PP',
+    autoencoder=None,
+    kappa=0.5,
+    beta=0.1
+)
+```
+
+---
+
 ### Frequency-Domain Methods
 
-#### 20. FFT-CF - Fourier Transform Counterfactual Explanations
+#### 22. FFT-CF - Fourier Transform Counterfactual Explanations
 **Implementation:** `cfts/cf_fft_cf/fft_cf.py`
 
 **Description:** Frequency-based counterfactual generation using Fast Fourier Transform (FFT) to decompose time series into frequency components, then iteratively modifying frequency coefficients (amplitude and/or phase) to find counterfactual explanations that change the model's prediction while maintaining temporal structure and realism.
@@ -1211,7 +1349,7 @@ cf, prediction = fft_gradient_cf(
 
 ### Hybrid Methods
 
-#### 21. SPARCE - Generating SPARse Counterfactual Explanations (2022)
+#### 23. SPARCE - Generating SPARse Counterfactual Explanations (2022)
 **Implementation:** `cfts/cf_sparce/sparce.py`
 
 **Description:** GAN-based architecture to generate sparse counterfactual explanations for multivariate time series. The generator creates residuals (modifications) that are added to the input query to produce counterfactuals. The approach regularizes the loss with adversarial, classification, similarity, sparsity, and smoothness (jerk) losses.
@@ -1281,7 +1419,7 @@ cf, prediction = sparce_generate(
 
 ---
 
-#### 22. Time-CF - Shapelet-based Model-agnostic Counterfactual Local Explanations
+#### 24. Time-CF - Shapelet-based Model-agnostic Counterfactual Local Explanations
 **Implementation:** `cfts/cf_time_cf/time_cf.py`
 
 **Description:** Time-CF leverages shapelets and TimeGAN to provide counterfactual explanations for arbitrary time series classifiers. The method extracts discriminative shapelet candidates using Random Shapelet Transform (RST), trains TimeGAN on instances from other classes (not the to-be-explained class), generates synthetic instances, and replaces shapelet regions in the original instance with synthetic shapelets. The counterfactual with minimum Hamming distance that flips the prediction is returned.
@@ -1327,7 +1465,7 @@ cf, prediction = time_cf_generate(
 
 ---
 
-#### 23. TeRCE - Temporal Rule-Based Counterfactual Explanations (2022)
+#### 25. TeRCE - Temporal Rule-Based Counterfactual Explanations (2022)
 **Implementation:** `cfts/cf_terce/terce.py`
 
 **Description:** TeRCE generates counterfactual explanations by mining class-specific temporal rules using discriminative shapelet pairs, then systematically removing original class rules and introducing target class rules through nearest unlike neighbor (NUN) replacement with min-max normalization for scale adaptation.
@@ -1428,7 +1566,7 @@ cf, cf_label = terce_generate(
 
 ---
 
-#### 24. MG-CF - Motif-Guided Counterfactual Explanations
+#### 26. MG-CF - Motif-Guided Counterfactual Explanations
 **Implementation:** `cfts/cf_mg_cf/mg_cf.py`
 
 **Description:** MG-CF uses shapelet transform to extract discriminative motifs (subsequences) from training data and generates counterfactuals by replacing the corresponding motif region in the original instance with the motif from the target class. This is a simple yet effective model-agnostic method that produces sparse and contiguous explanations.
@@ -1473,7 +1611,7 @@ cf, prediction = mg_cf_generate(
 
 ---
 
-#### 25. TimeX - Encoding Time-Series Explanations (2023)
+#### 27. TimeX - Encoding Time-Series Explanations (2023)
 **Implementation:** `cfts/cf_timex/timex.py`
 
 **Description:** Time series explainer that learns interpretable surrogate models through self-supervised model behavior consistency, generating saliency-based explanations.
@@ -1507,7 +1645,7 @@ saliency, prediction = timex_explanation(
 
 ---
 
-#### 26. TimeX++ - Learning Time-Series Explanations with Information Bottleneck (2024)
+#### 28. TimeX++ - Learning Time-Series Explanations with Information Bottleneck (2024)
 **Implementation:** `cfts/cf_timex_plus_plus/timex_plus_plus.py`
 
 **Description:** Improved time series explainer based on information bottleneck principle that generates in-distributed and label-preserving explanation instances. Addresses distribution shift and signaling issues in applying IB to time series explainability.

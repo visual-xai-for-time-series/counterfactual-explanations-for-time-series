@@ -59,6 +59,9 @@ import cfts.cf_cfwot.cfwot as cfwot
 import cfts.cf_cgm.cgm as cgm
 import cfts.cf_counts.counts as counts
 import cfts.cf_sparce.sparce as sparce
+import cfts.cf_cem.cem as cem
+import cfts.cf_ts_tweaking.ts_tweaking as ts_tweaking
+import cfts.cf__abstract.abstract as abstract_cf_mod
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -260,7 +263,8 @@ methods = [
     'Wachter Gradient', 'Wachter Genetic', 'GLACIER', 'Multi-SpaCE', 
     'Sub-SpaCE', 'TSEvo', 'LASTS', 'TSCF', 'FASTPACE', 'TIME-CF', 
     'SG-CF', 'MG-CF', 'Latent-CF', 'DiSCoX', 'M-CELS', 'FFT-CF', 
-    'TERCE', 'AB-CF', 'CFWOT', 'CGM', 'COUNTS', 'SPARCE'
+    'TERCE', 'AB-CF', 'CFWOT', 'CGM', 'COUNTS', 'SPARCE',
+    'CEM', 'TS-Tweaking', 'Abstract'
 ]
 
 # Initialize progress bar
@@ -692,6 +696,67 @@ except Exception as e:
     print(f'SPARCE failed: {type(e).__name__}: {str(e)[:100]}')
 progress.update(1)
 
+print('Start with CEM (Contrastive Explanation Method)')
+start_time = time.time()
+try:
+    cf_cem, prediction_cem = cem.cem_cf(
+        sample, model,
+        mode='PN',
+        autoencoder=None,
+        kappa=0.5,
+        beta=0.1,
+        gamma=0.2,
+        c_init=10.0,
+        c_steps=5,
+        max_iterations=500,
+        learning_rate=1e-2,
+        verbose=False,
+    )
+    timing_results['CEM'] = time.time() - start_time
+    print(f'CEM completed in {timing_results["CEM"]:.3f} seconds')
+except Exception as e:
+    cf_cem, prediction_cem = None, None
+    timing_results['CEM'] = time.time() - start_time
+    print(f'CEM failed: {type(e).__name__}: {str(e)[:100]}')
+progress.update(1)
+
+print('Start with TS-Tweaking (k-NN global tweaking)')
+start_time = time.time()
+try:
+    cf_ts_tweaking, prediction_ts_tweaking = ts_tweaking.ts_tweaking_knn_cf(
+        sample, dataset_test, model,
+        target=target_class,
+        k=5,
+        n_clusters=5,
+        alpha_steps=20,
+        verbose=False,
+    )
+    timing_results['TS-Tweaking'] = time.time() - start_time
+    print(f'TS-Tweaking completed in {timing_results["TS-Tweaking"]:.3f} seconds')
+except Exception as e:
+    cf_ts_tweaking, prediction_ts_tweaking = None, None
+    timing_results['TS-Tweaking'] = time.time() - start_time
+    print(f'TS-Tweaking failed: {type(e).__name__}: {str(e)[:100]}')
+progress.update(1)
+
+print('Start with Abstract (reference Gaussian noise template)')
+start_time = time.time()
+try:
+    cf_abstract, prediction_abstract = abstract_cf_mod.abstract_cf(
+        sample, model,
+        max_iter=200,
+        noise_scale=0.05,
+        escalate_every=10,
+        verbose=False,
+    )
+    timing_results['Abstract'] = time.time() - start_time
+    print(f'Abstract completed in {timing_results["Abstract"]:.3f} seconds')
+except Exception as e:
+    cf_abstract, prediction_abstract = None, None
+    timing_results['Abstract'] = time.time() - start_time
+    print(f'Abstract failed: {type(e).__name__}: {str(e)[:100]}')
+progress.update(1)
+
 # Close the progress bar
 progress.close()
 
@@ -739,6 +804,9 @@ print(format_combined_result('CFWOT', prediction_cfwot, timing_results['CFWOT'])
 print(format_combined_result('CGM', prediction_cgm, timing_results['CGM']))
 print(format_combined_result('COUNTS', prediction_counts, timing_results['COUNTS']))
 print(format_combined_result('SPARCE', prediction_sparce, timing_results['SPARCE']))
+print(format_combined_result('CEM', prediction_cem, timing_results['CEM']))
+print(format_combined_result('TS-Tweaking', prediction_ts_tweaking, timing_results['TS-Tweaking']))
+print(format_combined_result('Abstract', prediction_abstract, timing_results['Abstract']))
 print('='*80)
 print()
 
@@ -817,7 +885,10 @@ def create_enhanced_visualization(sample, label, original_pred_np, original_clas
         'CFWOT': '#7FB3D5',  # Sky Blue
         'CGM': '#76D7C4',  # Light Cyan
         'COUNTS': '#F8C471',  # Light Yellow
-        'SPARCE': '#AF7AC5'  # Lavender
+        'SPARCE': '#AF7AC5',  # Lavender
+        'CEM': '#2ECC71',  # Emerald Green
+        'TS-Tweaking': '#E74C3C',  # Alizarin Red
+        'Abstract': '#BDC3C7'  # Silver
     }
     
     # Create figure with subplots for each channel
@@ -925,7 +996,10 @@ cf_results = {
     'CFWOT': (cf_cfwot, prediction_cfwot),
     'CGM': (cf_cgm, prediction_cgm),
     'COUNTS': (cf_counts, prediction_counts),
-    'SPARCE': (cf_sparce, prediction_sparce)
+    'SPARCE': (cf_sparce, prediction_sparce),
+    'CEM': (cf_cem, prediction_cem),
+    'TS-Tweaking': (cf_ts_tweaking, prediction_ts_tweaking),
+    'Abstract': (cf_abstract, prediction_abstract)
 }
 
 # Create enhanced visualization

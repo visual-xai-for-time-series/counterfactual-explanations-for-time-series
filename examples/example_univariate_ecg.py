@@ -61,6 +61,9 @@ import cfts.cf_ab_cf.ab_cf as ab_cf
 from cfts.cf_sparce.sparce import sparce_gan_cf
 from cfts.cf_counts.counts import counts_cf_with_pretrained_model
 import cfts.cf_cfwot.cfwot as cfwot
+import cfts.cf_cem.cem as cem
+import cfts.cf_ts_tweaking.ts_tweaking as ts_tweaking
+import cfts.cf__abstract.abstract as abstract_cf_mod
 
 
 
@@ -257,7 +260,8 @@ methods = [
     'Wachter Gradient', 'Wachter Genetic', 'GLACIER', 'Multi-SpaCE', 
     'Sub-SpaCE', 'TSEvo', 'LASTS', 'TSCF', 'FASTPACE', 'TIME-CF', 
     'SG-CF', 'MG-CF', 'Latent-CF', 'CGM', 'DiSCoX', 'CELS', 
-    'FFT-CF', 'TERCE', 'AB-CF', 'SPARCE', 'CounTS', 'CFWoT'
+    'FFT-CF', 'TERCE', 'AB-CF', 'SPARCE', 'CounTS', 'CFWoT',
+    'CEM', 'TS-Tweaking', 'Abstract'
 ]
 
 # Initialize progress bar
@@ -753,6 +757,70 @@ except Exception as e:
 finally:
     progress.update(1)
 
+print('Start with CEM (Contrastive Explanation Method)')
+start_time = time.time()
+try:
+    cf_cem, prediction_cem = cem.cem_cf(
+        sample, model,
+        mode='PN',
+        autoencoder=None,
+        kappa=0.5,
+        beta=0.1,
+        gamma=0.2,
+        c_init=10.0,
+        c_steps=5,
+        max_iterations=500,
+        learning_rate=1e-2,
+        verbose=False,
+    )
+    timing_results['CEM'] = time.time() - start_time
+    print(f'CEM completed in {timing_results["CEM"]:.3f} seconds')
+except Exception as e:
+    cf_cem, prediction_cem = None, None
+    timing_results['CEM'] = time.time() - start_time
+    print(f'CEM failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
+print('Start with TS-Tweaking (k-NN global tweaking)')
+start_time = time.time()
+try:
+    cf_ts_tweaking, prediction_ts_tweaking = ts_tweaking.ts_tweaking_knn_cf(
+        sample, dataset_test, model,
+        target=target_class,
+        k=5,
+        n_clusters=5,
+        alpha_steps=20,
+        verbose=False,
+    )
+    timing_results['TS-Tweaking'] = time.time() - start_time
+    print(f'TS-Tweaking completed in {timing_results["TS-Tweaking"]:.3f} seconds')
+except Exception as e:
+    cf_ts_tweaking, prediction_ts_tweaking = None, None
+    timing_results['TS-Tweaking'] = time.time() - start_time
+    print(f'TS-Tweaking failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
+print('Start with Abstract (reference Gaussian noise template)')
+start_time = time.time()
+try:
+    cf_abstract, prediction_abstract = abstract_cf_mod.abstract_cf(
+        sample, model,
+        max_iter=200,
+        noise_scale=0.05,
+        escalate_every=10,
+        verbose=False,
+    )
+    timing_results['Abstract'] = time.time() - start_time
+    print(f'Abstract completed in {timing_results["Abstract"]:.3f} seconds')
+except Exception as e:
+    cf_abstract, prediction_abstract = None, None
+    timing_results['Abstract'] = time.time() - start_time
+    print(f'Abstract failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
 # Close the progress bar
 progress.close()
 
@@ -809,6 +877,9 @@ print(format_combined_result('AB-CF', prediction_ab_cf, timing_results['AB-CF'])
 print(format_combined_result('SPARCE', prediction_sparce, timing_results['SPARCE']))
 print(format_combined_result('CounTS', prediction_counts, timing_results['CounTS']))
 print(format_combined_result('CFWoT', prediction_cfwot, timing_results['CFWoT']))
+print(format_combined_result('CEM', prediction_cem, timing_results['CEM']))
+print(format_combined_result('TS-Tweaking', prediction_ts_tweaking, timing_results['TS-Tweaking']))
+print(format_combined_result('Abstract', prediction_abstract, timing_results['Abstract']))
 print('='*80)
 print()
 
@@ -853,6 +924,9 @@ cf_ab_cf_pl = None if cf_ab_cf is None else _to_channel_first(cf_ab_cf)
 cf_sparce_pl = None if cf_sparce is None else _to_channel_first(cf_sparce)
 cf_counts_pl = None if cf_counts is None else _to_channel_first(cf_counts)
 cf_cfwot_pl = None if cf_cfwot is None else _to_channel_first(cf_cfwot)
+cf_cem_pl = None if cf_cem is None else _to_channel_first(cf_cem)
+cf_ts_tweaking_pl = None if cf_ts_tweaking is None else _to_channel_first(cf_ts_tweaking)
+cf_abstract_pl = None if cf_abstract is None else _to_channel_first(cf_abstract)
 
 def _fmt_pred(pred):
     """Format a model prediction array into 'label (conf)' or 'None'."""
@@ -896,6 +970,9 @@ pred_ab_cf_str = _fmt_pred(prediction_ab_cf)
 pred_sparce_str = _fmt_pred(prediction_sparce)
 pred_counts_str = _fmt_pred(prediction_counts)
 pred_cfwot_str = _fmt_pred(prediction_cfwot)
+pred_cem_str = _fmt_pred(prediction_cem)
+pred_ts_tweaking_str = _fmt_pred(prediction_ts_tweaking)
+pred_abstract_str = _fmt_pred(prediction_abstract)
 pred_original_str = _fmt_pred(original_pred_np)
 
 def _check_success(pred, target):
@@ -934,6 +1011,9 @@ success_ab_cf = _check_success(prediction_ab_cf, target_class)
 success_sparce = _check_success(prediction_sparce, target_class)
 success_counts = _check_success(prediction_counts, target_class)
 success_cfwot = _check_success(prediction_cfwot, target_class)
+success_cem = _check_success(prediction_cem, target_class)
+success_ts_tweaking = _check_success(prediction_ts_tweaking, target_class)
+success_abstract = _check_success(prediction_abstract, target_class)
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     """Plot each channel on ax. arr is (C, L). styles can be list of kwargs per channel."""
@@ -947,7 +1027,7 @@ def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     if C > 1:
         ax.legend([f'channel:{i}' for i in range(C)], loc='upper right', fontsize='small')
 
-n_rows = 55  # 1 original + 27 individual CFs + 27 overlays (includes CGM, SPARCE, CounTS, CFWoT)
+n_rows = 61  # 1 original + 30 individual CFs + 30 overlays (includes CGM, SPARCE, CounTS, CFWoT, CEM, TS-Tweaking, Abstract)
 fig, axs = plt.subplots(n_rows, figsize=(10, 1.75 * n_rows))
 fig.suptitle('Counterfactual Explanations - ECG200', y=0.998, fontsize=14)
 
@@ -1148,6 +1228,27 @@ else:
     axs[i].set_title('CFWoT [✗ FAILED]')
 i += 1
 
+if cf_cem_pl is not None:
+    status = '✓' if success_cem else '✗'
+    plot_channels(axs[i], cf_cem_pl, f'CEM [{status}] — pred: {pred_cem_str}')
+else:
+    axs[i].set_title('CEM [✗ FAILED]')
+i += 1
+
+if cf_ts_tweaking_pl is not None:
+    status = '✓' if success_ts_tweaking else '✗'
+    plot_channels(axs[i], cf_ts_tweaking_pl, f'TS-Tweaking [{status}] — pred: {pred_ts_tweaking_str}')
+else:
+    axs[i].set_title('TS-Tweaking [✗ FAILED]')
+i += 1
+
+if cf_abstract_pl is not None:
+    status = '✓' if success_abstract else '✗'
+    plot_channels(axs[i], cf_abstract_pl, f'Abstract [{status}] — pred: {pred_abstract_str}')
+else:
+    axs[i].set_title('Abstract [✗ FAILED]')
+i += 1
+
 # overlay plots: counterfactual vs original
 def overlay(ax, base, other, title, pred_str=None, is_success=False):
     if other is None:
@@ -1213,6 +1314,12 @@ i += 1
 overlay(axs[i], sample_pl, cf_counts_pl, 'CounTS vs Original', pred_counts_str, success_counts)
 i += 1
 overlay(axs[i], sample_pl, cf_cfwot_pl, 'CFWoT vs Original', pred_cfwot_str, success_cfwot)
+i += 1
+overlay(axs[i], sample_pl, cf_cem_pl, 'CEM vs Original', pred_cem_str, success_cem)
+i += 1
+overlay(axs[i], sample_pl, cf_ts_tweaking_pl, 'TS-Tweaking vs Original', pred_ts_tweaking_str, success_ts_tweaking)
+i += 1
+overlay(axs[i], sample_pl, cf_abstract_pl, 'Abstract vs Original', pred_abstract_str, success_abstract)
 
 plt.tight_layout(rect=[0, 0.01, 1, 0.999])
 plt.savefig('counterfactuals_ecg200.png')
