@@ -24,6 +24,31 @@ from datetime import datetime
 script_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, f'{script_path}/../')
 
+# ---------------------------------------------------------------------------
+# Logging – tee stdout/stderr to a file alongside terminal output
+# ---------------------------------------------------------------------------
+class _Tee:
+    """Mirror writes to both the original stream and a log file."""
+    def __init__(self, stream, logfile):
+        self._stream = stream
+        self._log = open(logfile, 'w', buffering=1)
+    def write(self, data):
+        self._stream.write(data)
+        self._log.write(data)
+    def flush(self):
+        self._stream.flush()
+        self._log.flush()
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+_log_dir = os.path.join(script_path, 'logs')
+os.makedirs(_log_dir, exist_ok=True)
+_log_file = os.path.join(_log_dir, 'run_all.log')
+sys.stdout = _Tee(sys.stdout, _log_file)
+sys.stderr = _Tee(sys.stderr, _log_file)
+print(f'Logging to: {_log_file}')
+# ---------------------------------------------------------------------------
+
 def print_header(title):
     """Print a formatted header for each section."""
     print("\n" + "="*80)
@@ -61,7 +86,7 @@ def run_script(script_name, description):
             [python_executable, script_name],
             capture_output=True,
             text=True,
-            timeout=1800  # 30 minutes timeout
+            timeout=7200  # 2 hours timeout per script
         )
         
         duration = time.time() - start_time
@@ -101,7 +126,8 @@ def check_requirements():
     required_scripts = [
         'example_multivariate.py',
         'example_univariate.py',
-        'metrics_evaluation_example.py'
+        'example_univariate_ecg.py',
+        'example_metrics_evaluation.py'
     ]
     
     missing_scripts = []
@@ -146,7 +172,8 @@ def main():
     scripts_to_run = [
         ('example_multivariate.py', 'Arabic Digits Counterfactual Examples'),
         ('example_univariate.py', 'FordA Dataset Counterfactual Examples'),
-        ('metrics_evaluation_example.py', 'Comprehensive Metrics Evaluation')
+        ('example_univariate_ecg.py', 'ECG200 Dataset Counterfactual Examples'),
+        ('example_metrics_evaluation.py', 'Comprehensive Metrics Evaluation')
     ]
     
     print_section("Execution Plan")
@@ -205,7 +232,8 @@ def main():
     print_section("Generated Files")
     generated_files = [
         'counterfactuals_arabic_digits.png',
-        'counterfactuals_forda.png'
+        'counterfactuals_forda.png',
+        'counterfactuals_ecg200.png'
     ]
     
     for filename in generated_files:

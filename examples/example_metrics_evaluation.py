@@ -4,15 +4,16 @@ Comprehensive Counterfactual Metrics Evaluation Example
 This example demonstrates how to evaluate counterfactual explanation generation
 algorithms using the comprehensive metrics suite. It integrates with the existing
 counterfactual methods (Native Guide, COMTE, COMTE-TS, SETS, MOC, Wachter, GLACIER,
-Multi-SpaCE, Sub-SpaCE, TSEvo, LASTS, TSCF, FASTPACE, TIME-CF, SG-CF, MG-CF, 
-Latent-CF, DiSCoX, CELS, FFT-CF, TERCE, AB-CF, CFWOT, CGM, COUNTS, SPARCE) from the 
+Multi-SpaCE, Sub-SpaCE, TSEvo, LASTS, TSCF, FASTPACE, TIME-CF, SG-CF, MG-CF,
+Latent-CF, DiSCoX, CELS, FFT-CF, TERCE, AB-CF, CFWOT, CGM, COUNTS, SPARCE,
+CEM-PN, Abstract-CF, TS-Tweaking-kNN, TS-Tweaking-Irrev, TS-Tweaking-Rev) from the
 cfts package and evaluates them on the FordA dataset.
 
 Note: Sub-SpaCE is designed primarily for multivariate time series and may not work
 with univariate datasets like FordA. It will be skipped if incompatible.
 
 Features:
-- Real counterfactual algorithms evaluation (27 methods)
+- Real counterfactual algorithms evaluation (32 methods)
 - Comprehensive metrics across all categories
 - Keane et al. (2021) evaluation metrics (validity, proximity, compactness)
 - Algorithm benchmarking and comparison
@@ -23,12 +24,38 @@ Features:
 
 import os
 import sys
+import signal
 import warnings
 warnings.filterwarnings('ignore')
 
 # Add paths for imports
 script_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, f'{script_path}/../')
+
+# ---------------------------------------------------------------------------
+# Logging – tee stdout/stderr to a file alongside terminal output
+# ---------------------------------------------------------------------------
+class _Tee:
+    """Mirror writes to both the original stream and a log file."""
+    def __init__(self, stream, logfile):
+        self._stream = stream
+        self._log = open(logfile, 'w', buffering=1)
+    def write(self, data):
+        self._stream.write(data)
+        self._log.write(data)
+    def flush(self):
+        self._stream.flush()
+        self._log.flush()
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+_log_dir = os.path.join(script_path, 'logs')
+os.makedirs(_log_dir, exist_ok=True)
+_log_file = os.path.join(_log_dir, 'example_metrics_evaluation.log')
+sys.stdout = _Tee(sys.stdout, _log_file)
+sys.stderr = _Tee(sys.stderr, _log_file)
+print(f'Logging to: {_log_file}')
+# ---------------------------------------------------------------------------
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -68,6 +95,9 @@ import cfts.cf_cfwot.cfwot as cfwot
 import cfts.cf_cgm.cgm as cgm
 import cfts.cf_counts.counts as counts
 import cfts.cf_sparce.sparce as sparce
+import cfts.cf_cem.cem as cem_mod
+import cfts.cf__abstract.abstract as abstract_mod
+import cfts.cf_ts_tweaking.ts_tweaking as ts_tweaking
 
 # Import metrics
 from cfts.metrics import (
@@ -85,6 +115,9 @@ sns.set_palette("husl")
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# Per-algorithm timeout (seconds). SIGALRM interrupts blocking C/Python code.
+PER_ALGO_TIMEOUT = 120
+
 
 def load_forda_data_and_model():
     """Load FordA dataset and trained model."""
@@ -97,7 +130,7 @@ def load_forda_data_and_model():
     
     # Load pre-trained model
     models_dir = os.path.abspath(os.path.join(script_path, '..', 'models'))
-    model_file = os.path.join(models_dir, f'simple_cnn_{output_classes}.pth')
+    model_file = os.path.join(models_dir, f'simple_cnn_forda_{output_classes}.pth')
     
     if os.path.exists(model_file):
         print(f'Loading saved model from {model_file}')
@@ -171,8 +204,8 @@ def create_algorithm_wrappers(dataset_test, model):
         # For multivariate data, proceed with Sub-SpaCE
         cf, _ = subspace.subspace_cf(original_ts, dataset_test, model,
                                      desired_class=target_class,
-                                     population_size=100,
-                                     max_iter=200,
+                                     population_size=50,
+                                     max_iter=100,
                                      alpha=0.8,
                                      beta=0.15,
                                      eta=0.05,
@@ -186,8 +219,8 @@ def create_algorithm_wrappers(dataset_test, model):
     def tsevo_wrapper(original_ts, target_class=None, **kwargs):
         cf, _ = tsevo.tsevo_cf(original_ts, dataset_test, model, 
                                target_class=target_class,
-                               population_size=50,
-                               generations=100,
+                               population_size=30,
+                               generations=30,
                                verbose=False)
         return cf if cf is not None else original_ts
     
@@ -195,8 +228,8 @@ def create_algorithm_wrappers(dataset_test, model):
         cf, _ = lasts.lasts_cf(original_ts, dataset_test, model, 
                                target_class=target_class,
                                latent_dim=32,
-                               max_iterations=1000,
-                               train_ae_epochs=50,
+                               n_iterations=200,
+                               train_ae_epochs=10,
                                verbose=False)
         return cf if cf is not None else original_ts
     
@@ -207,7 +240,7 @@ def create_algorithm_wrappers(dataset_test, model):
                             lambda_l2=0.01,
                             lambda_smooth=0.001,
                             learning_rate=0.1,
-                            max_iterations=2000,
+                            max_iterations=500,
                             verbose=False)
         return cf if cf is not None else original_ts
     
@@ -234,7 +267,7 @@ def create_algorithm_wrappers(dataset_test, model):
                                             X_train=X_train_subset,
                                             y_train=y_train_subset,
                                             target=target_class,
-                                            n_epochs=20,
+                                            n_epochs=5,
                                             n_synthetic=50,
                                             verbose=False)
             return cf if cf is not None else original_ts
@@ -245,7 +278,7 @@ def create_algorithm_wrappers(dataset_test, model):
         try:
             cf, _ = sg_cf.sg_cf(original_ts, model, 
                                target=target_class,
-                               max_iter=1000,
+                               max_iter=200,
                                verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
@@ -346,8 +379,8 @@ def create_algorithm_wrappers(dataset_test, model):
         try:
             cf, _ = cfwot.cfwot(original_ts, model,
                                target=target_class,
-                               M_E=50,
-                               M_T=50,
+                               M_E=20,
+                               M_T=20,
                                verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
@@ -384,7 +417,63 @@ def create_algorithm_wrappers(dataset_test, model):
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
+    def cem_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = cem_mod.cem_cf(
+                original_ts, model,
+                mode='PN',
+                autoencoder=None,
+                kappa=0.5,
+                beta=0.1,
+                gamma=0.2,
+                c_init=10.0,
+                c_steps=3,
+                max_iterations=200,
+                learning_rate=1e-2,
+                verbose=False,
+            )
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def abstract_cf_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = abstract_mod.abstract_cf(
+                original_ts, model,
+                max_iter=100,
+                noise_scale=0.05,
+                escalate_every=10,
+                verbose=False,
+            )
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def ts_tweaking_knn_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = ts_tweaking.ts_tweaking_knn_cf(
+                original_ts, dataset_test, model, target=target_class, verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def ts_tweaking_irrev_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = ts_tweaking.ts_tweaking_irreversible_cf(
+                original_ts, dataset_test, model, target=target_class, verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def ts_tweaking_rev_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = ts_tweaking.ts_tweaking_reversible_cf(
+                original_ts, dataset_test, model, target=target_class, verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
     return {
         'Native Guide': native_guide_wrapper,
         'COMTE': comte_wrapper,
@@ -412,7 +501,12 @@ def create_algorithm_wrappers(dataset_test, model):
         'CFWOT': cfwot_wrapper,
         'CGM': cgm_wrapper,
         'COUNTS': counts_wrapper,
-        'SPARCE': sparce_wrapper
+        'SPARCE': sparce_wrapper,
+        'CEM-PN': cem_wrapper,
+        'Abstract-CF': abstract_cf_wrapper,
+        'TS-Tweaking-kNN': ts_tweaking_knn_wrapper,
+        'TS-Tweaking-Irrev': ts_tweaking_irrev_wrapper,
+        'TS-Tweaking-Rev': ts_tweaking_rev_wrapper,
     }
 
 
@@ -446,11 +540,19 @@ def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, data
     counterfactuals = {}
     successful_algorithms = []
     
+    def _sigalrm_handler(signum, frame):
+        raise TimeoutError(f"Algorithm timed out after {PER_ALGO_TIMEOUT}s")
+
     for name, algorithm in tqdm(algorithms.items(), desc="  Generating CFs", leave=False):
         try:
             print(f"  Generating counterfactual with {name}...")
-            cf = algorithm(original_ts, target_class=target_class)
-            
+            signal.signal(signal.SIGALRM, _sigalrm_handler)
+            signal.alarm(PER_ALGO_TIMEOUT)
+            try:
+                cf = algorithm(original_ts, target_class=target_class)
+            finally:
+                signal.alarm(0)  # Cancel alarm regardless of outcome
+
             # Check if prediction actually changed
             original_pred = model_wrapper(original_ts)
             cf_pred = model_wrapper(cf)
@@ -465,6 +567,8 @@ def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, data
             else:
                 print(f"    ✗ Failed: {original_class} → {cf_class} (target: {target_class})")
                 
+        except TimeoutError as e:
+            print(f"    ✗ Timeout: {name} — {str(e)}")
         except Exception as e:
             print(f"    ✗ Error with {name}: {str(e)}")
     
@@ -516,14 +620,14 @@ def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, data
 
 
 def create_results_visualization(all_results, output_dir='./'):
-    """Create comprehensive visualization of evaluation results."""
-    
+    """Create one plot per metric category and save each as a separate PNG."""
+
     # Collect all individual metrics
     all_metrics_data = []
     for instance_idx, instance_results in enumerate(all_results):
         if instance_results is None:
             continue
-            
+
         for algorithm, metrics in instance_results['individual_results'].items():
             for metric_name, value in metrics.items():
                 all_metrics_data.append({
@@ -532,69 +636,75 @@ def create_results_visualization(all_results, output_dir='./'):
                     'Metric': metric_name,
                     'Value': value
                 })
-    
+
     if not all_metrics_data:
         print("No results to visualize!")
-        return
-    
+        return [], None
+
     df = pd.DataFrame(all_metrics_data)
-    
-    # Create metric category groupings
-    validity_metrics = ['prediction_change', 'class_confidence', 'boundary_distance']
-    proximity_metrics = ['l2_distance', 'manhattan_distance', 'normalized_distance']
-    sparsity_metrics = ['l0_norm', 'percentage_changed', 'segment_sparsity']
-    realism_metrics = ['temporal_consistency', 'range_validity', 'autocorr_preservation', 'statistical_similarity']
-    
-    # Create subplots for different metric categories
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    fig.suptitle('Counterfactual Algorithm Performance Comparison', fontsize=16, fontweight='bold')
-    
-    # Plot validity metrics
-    validity_data = df[df['Metric'].isin(validity_metrics)]
-    if not validity_data.empty:
-        sns.boxplot(data=validity_data, x='Algorithm', y='Value', hue='Metric', ax=axes[0,0])
-        axes[0,0].set_title('Validity Metrics', fontweight='bold')
-        axes[0,0].set_xticklabels(axes[0,0].get_xticklabels(), rotation=45, ha='right')
-        axes[0,0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    
-    # Plot proximity metrics
-    proximity_data = df[df['Metric'].isin(proximity_metrics)]
-    if not proximity_data.empty:
-        sns.boxplot(data=proximity_data, x='Algorithm', y='Value', hue='Metric', ax=axes[0,1])
-        axes[0,1].set_title('Proximity Metrics', fontweight='bold')
-        axes[0,1].set_xticklabels(axes[0,1].get_xticklabels(), rotation=45, ha='right')
-        axes[0,1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    
-    # Plot sparsity metrics
-    sparsity_data = df[df['Metric'].isin(sparsity_metrics)]
-    if not sparsity_data.empty:
-        sns.boxplot(data=sparsity_data, x='Algorithm', y='Value', hue='Metric', ax=axes[1,0])
-        axes[1,0].set_title('Sparsity Metrics', fontweight='bold')
-        axes[1,0].set_xticklabels(axes[1,0].get_xticklabels(), rotation=45, ha='right')
-        axes[1,0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    
-    # Plot realism metrics
-    realism_data = df[df['Metric'].isin(realism_metrics)]
-    if not realism_data.empty:
-        sns.boxplot(data=realism_data, x='Algorithm', y='Value', hue='Metric', ax=axes[1,1])
-        axes[1,1].set_title('Realism Metrics', fontweight='bold')
-        axes[1,1].set_xticklabels(axes[1,1].get_xticklabels(), rotation=45, ha='right')
-        axes[1,1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    
-    # Save the plot
-    output_filename = os.path.join(output_dir, 'counterfactual_metrics_evaluation.png')
-    plt.savefig(output_filename, dpi=300, bbox_inches='tight', 
-                facecolor='white', edgecolor='none')
-    print(f"\nComprehensive metrics visualization saved as: {output_filename}")
-    
-    # Create summary statistics table
-    summary_stats = df.groupby(['Algorithm', 'Metric'])['Value'].agg(['mean', 'std', 'median']).round(3)
+
+    # One figure per metric category
+    metric_categories = {
+        'Validity':  ['prediction_change', 'class_confidence', 'boundary_distance'],
+        'Proximity': ['l2_distance', 'manhattan_distance', 'normalized_distance'],
+        'Sparsity':  ['l0_norm', 'percentage_changed', 'segment_sparsity'],
+        'Realism':   ['temporal_consistency', 'range_validity',
+                      'autocorr_preservation', 'statistical_similarity'],
+    }
+
+    output_filenames = []
+    for category_name, metric_list in metric_categories.items():
+        cat_data = df[df['Metric'].isin(metric_list)]
+        if cat_data.empty:
+            continue
+
+        # Keep only metrics that actually appear in the data
+        present_metrics = [m for m in metric_list if m in cat_data['Metric'].unique()]
+        n_metrics = len(present_metrics)
+        if n_metrics == 0:
+            continue
+
+        n_algos = len(cat_data['Algorithm'].unique())
+        subplot_w = max(10, n_algos * 0.5)
+        subplot_h = 4
+
+        fig, axes = plt.subplots(
+            n_metrics, 1,
+            figsize=(subplot_w, subplot_h * n_metrics),
+            squeeze=False,
+        )
+
+        fig.suptitle(
+            f'{category_name} Metrics — Counterfactual Algorithm Comparison',
+            fontweight='bold', fontsize=15, y=1.01,
+        )
+
+        for row, metric_name in enumerate(present_metrics):
+            ax = axes[row, 0]
+            metric_data = cat_data[cat_data['Metric'] == metric_name]
+            sns.boxplot(data=metric_data, x='Algorithm', y='Value', ax=ax,
+                        order=sorted(metric_data['Algorithm'].unique()))
+            ax.set_title(metric_name.replace('_', ' ').title(), fontweight='bold', fontsize=12)
+            ax.set_xlabel('')
+            ax.set_ylabel('Value', fontsize=10)
+            ax.tick_params(axis='x', rotation=45)
+            ax.grid(True, axis='y', alpha=0.3)
+
+        plt.tight_layout()
+
+        fname = os.path.join(output_dir, f'metrics_{category_name.lower()}.png')
+        plt.savefig(fname, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+        plt.close()
+        print(f"\n{category_name} metrics plot saved as: {fname}")
+        output_filenames.append(fname)
+
+    # Summary statistics table
+    summary_stats = df.groupby(['Algorithm', 'Metric'])['Value'].agg(
+        ['mean', 'std', 'median']).round(3)
     print("\n=== Summary Statistics ===")
     print(summary_stats)
-    
-    return output_filename, summary_stats
+
+    return output_filenames, summary_stats
 
 
 def visualize_counterfactuals(all_results, output_dir='./'):
@@ -773,72 +883,116 @@ def evaluate_keane_metrics_batch(original_ts_list, all_results, model_wrapper, t
 
 def visualize_keane_metrics(df_keane, output_dir='./'):
     """
-    Create visualization of Keane et al. (2021) metrics.
-    
+    Create one plot per Keane et al. (2021) metric, each saved as a separate PNG.
+
     Args:
         df_keane: DataFrame with Keane metrics
-        output_dir: Directory to save the plot
-    
+        output_dir: Directory to save the plots
+
     Returns:
-        Path to saved plot
+        List of paths to saved plots
     """
     if df_keane is None or df_keane.empty:
         print("No Keane metrics to visualize!")
-        return None
-    
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    
+        return []
+
     algorithms = df_keane['Algorithm'].tolist()
     colors = plt.cm.Set2(np.linspace(0, 1, len(algorithms)))
-    
-    # 1. Validity (higher is better)
-    ax1 = axes[0]
-    bars1 = ax1.barh(algorithms, df_keane['Validity'], color=colors, alpha=0.8, edgecolor='black')
-    ax1.set_xlabel('Validity Score', fontweight='bold', fontsize=11)
-    ax1.set_title('Validity\n(Higher is Better)', fontweight='bold', fontsize=12)
-    ax1.set_xlim(0, 1)
-    ax1.grid(True, alpha=0.3, axis='x')
-    ax1.axvline(x=0.5, color='red', linestyle='--', linewidth=1, alpha=0.5, label='50% threshold')
-    
-    # Add value labels
-    for i, (bar, val) in enumerate(zip(bars1, df_keane['Validity'])):
-        ax1.text(val + 0.02, i, f'{val:.1%}', va='center', fontsize=9)
-    
-    # 2. Proximity (lower is better)
-    ax2 = axes[1]
-    bars2 = ax2.barh(algorithms, df_keane['Proximity'], color=colors, alpha=0.8, edgecolor='black')
-    ax2.set_xlabel('Proximity Score (L2 Distance)', fontweight='bold', fontsize=11)
-    ax2.set_title('Proximity\n(Lower is Better)', fontweight='bold', fontsize=12)
-    ax2.grid(True, alpha=0.3, axis='x')
-    
-    # Add value labels
-    for i, (bar, val) in enumerate(zip(bars2, df_keane['Proximity'])):
-        ax2.text(val + 0.02 * ax2.get_xlim()[1], i, f'{val:.2f}', va='center', fontsize=9)
-    
-    # 3. Compactness (higher is better)
-    ax3 = axes[2]
-    bars3 = ax3.barh(algorithms, df_keane['Compactness'], color=colors, alpha=0.8, edgecolor='black')
-    ax3.set_xlabel('Compactness Score', fontweight='bold', fontsize=11)
-    ax3.set_title('Compactness\n(Higher is Better)', fontweight='bold', fontsize=12)
-    ax3.set_xlim(0, 1)
-    ax3.grid(True, alpha=0.3, axis='x')
-    ax3.axvline(x=0.5, color='red', linestyle='--', linewidth=1, alpha=0.5, label='50% threshold')
-    
-    # Add value labels
-    for i, (bar, val) in enumerate(zip(bars3, df_keane['Compactness'])):
-        ax3.text(val + 0.02, i, f'{val:.1%}', va='center', fontsize=9)
-    
-    plt.suptitle('Keane et al. (2021) Evaluation Metrics Comparison', 
-                 fontsize=14, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    
-    # Save the plot
-    output_filename = os.path.join(output_dir, 'keane_metrics_comparison.png')
-    plt.savefig(output_filename, dpi=300, bbox_inches='tight',
-                facecolor='white', edgecolor='none')
-    print(f"\nKeane metrics comparison saved as: {output_filename}")
-    
-    return output_filename
+    output_filenames = []
+
+    metric_specs = [
+        ('Validity',    'Validity Score',        'keane_validity.png',    True),
+        ('Proximity',   'Proximity (L2 Distance)', 'keane_proximity.png',  False),
+        ('Compactness', 'Compactness Score',      'keane_compactness.png', True),
+    ]
+
+    for col, xlabel, filename, higher_better in metric_specs:
+        fig, ax = plt.subplots(figsize=(10, max(4, 0.45 * len(algorithms))))
+        bars = ax.barh(algorithms, df_keane[col], color=colors, alpha=0.8, edgecolor='black')
+        ax.set_xlabel(xlabel, fontweight='bold', fontsize=11)
+        direction = '(Higher is Better)' if higher_better else '(Lower is Better)'
+        ax.set_title(f'Keane et al. (2021) — {col}\n{direction}',
+                     fontweight='bold', fontsize=13)
+        if higher_better:
+            ax.set_xlim(0, 1)
+            ax.axvline(x=0.5, color='red', linestyle='--', linewidth=1, alpha=0.5)
+        ax.grid(True, alpha=0.3, axis='x')
+
+        # Value labels
+        x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+        for i, (bar, val) in enumerate(zip(bars, df_keane[col])):
+            fmt = f'{val:.1%}' if higher_better else f'{val:.3f}'
+            ax.text(val + 0.02 * x_range, i, fmt, va='center', fontsize=9)
+
+        plt.tight_layout()
+        fpath = os.path.join(output_dir, filename)
+        plt.savefig(fpath, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+        plt.close()
+        print(f"\nKeane {col} plot saved as: {fpath}")
+        output_filenames.append(fpath)
+
+    return output_filenames
+
+
+def combine_png_files(file_list, output_path, delete_individual=True):
+    """
+    Stack a list of PNG files vertically into a single combined image.
+
+    Each source image is kept at its original width; narrower images are
+    padded with white on the right so all panels line up.  A thin grey
+    separator line is drawn between panels for readability.
+
+    Args:
+        file_list         : ordered list of PNG paths to combine
+        output_path       : path for the output PNG
+        delete_individual : if True (default), delete source files after
+                            the combined image is successfully written
+
+    Returns:
+        output_path if successful, else None
+    """
+    from PIL import Image
+
+    existing = [p for p in file_list if p and os.path.exists(p)]
+    if not existing:
+        print("combine_png_files: no source files found, skipping.")
+        return None
+
+    images = [Image.open(p).convert('RGB') for p in existing]
+    max_w   = max(img.width  for img in images)
+    sep     = 6   # pixels between panels
+    total_h = sum(img.height for img in images) + sep * (len(images) - 1)
+
+    canvas = Image.new('RGB', (max_w, total_h), color=(255, 255, 255))
+    y_off  = 0
+    for i, img in enumerate(images):
+        # Pad narrower images with white on the right
+        if img.width < max_w:
+            padded = Image.new('RGB', (max_w, img.height), (255, 255, 255))
+            padded.paste(img, (0, 0))
+            img = padded
+        canvas.paste(img, (0, y_off))
+        y_off += img.height
+        if i < len(images) - 1:
+            # Draw separator
+            for row in range(sep):
+                for col in range(max_w):
+                    canvas.putpixel((col, y_off + row), (200, 200, 200))
+            y_off += sep
+
+    canvas.save(output_path, dpi=(300, 300))
+    size_kb = os.path.getsize(output_path) // 1024
+    print(f"\nCombined plot saved as: {output_path} ({size_kb} KB, {len(existing)} panels)")
+
+    if delete_individual:
+        for p in existing:
+            try:
+                os.remove(p)
+                print(f"  Deleted individual file: {os.path.basename(p)}")
+            except OSError as e:
+                print(f"  Warning: could not delete {p}: {e}")
+
+    return output_path
 
 
 def main():
@@ -859,7 +1013,7 @@ def main():
     print(f"✓ {len(algorithms)} algorithms prepared")
     
     # Select test instances (diverse examples)
-    n_instances = 5  # Evaluate on 5 instances
+    n_instances = 3  # Evaluate on 3 instances
     test_indices = np.random.choice(len(dataset_test.X), n_instances, replace=False)
     
     print(f"\n=== Evaluating {n_instances} test instances ===")
@@ -892,15 +1046,20 @@ def main():
     # Create visualizations and summary
     try:
         # Create metrics visualization
-        output_filename, summary_stats = create_results_visualization(valid_results)
+        output_filenames, summary_stats = create_results_visualization(valid_results)
         
         # Evaluate Keane et al. (2021) metrics
         df_keane = evaluate_keane_metrics_batch(original_ts_list, all_results, 
                                                 model_wrapper, target_classes_list)
         
         # Visualize Keane metrics
+        keane_filenames = []
         if df_keane is not None:
-            visualize_keane_metrics(df_keane)
+            keane_filenames = visualize_keane_metrics(df_keane)
+
+        # Combine all metric plots into one image
+        all_plot_files = list(output_filenames) + list(keane_filenames)
+        combine_png_files(all_plot_files, os.path.join('./', 'metrics_combined.png'))
         
         # Calculate algorithm success rates
         print("\n=== Algorithm Success Rates ===")
@@ -956,8 +1115,14 @@ def main():
     
     print("\n=== Evaluation Complete ===")
     print("Generated outputs:")
-    print("  - counterfactual_metrics_evaluation.png (metric comparisons)")
-    print("  - keane_metrics_comparison.png (Keane et al. 2021 metrics)")
+    print("  - metrics_combined.png  (ALL metrics and Keane panels in one file)")
+    print("  - metrics_validity.png (validity metric comparisons)")
+    print("  - metrics_proximity.png (proximity metric comparisons)")
+    print("  - metrics_sparsity.png (sparsity metric comparisons)")
+    print("  - metrics_realism.png (realism metric comparisons)")
+    print("  - keane_validity.png (Keane validity)")
+    print("  - keane_proximity.png (Keane proximity)")
+    print("  - keane_compactness.png (Keane compactness)")
     print("\nKeane et al. (2021) Reference:")
     print("  Keane, M. T., Kenny, E. M., Delaney, E., & Smyth, B. (2021).")
     print("  If only we had better counterfactual explanations: Five key deficits")

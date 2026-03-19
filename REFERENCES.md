@@ -13,6 +13,7 @@ This document provides comprehensive references for all counterfactual explanati
   - [Segment-Based Methods](#segment-based-methods)
   - [Hybrid Methods](#hybrid-methods)
 - [Evaluation Metrics References](#evaluation-metrics-references)
+- [Evaluation Metrics References](#evaluation-metrics-references)
 - [Related Surveys and Reviews](#related-surveys-and-reviews)
 
 ---
@@ -243,6 +244,67 @@ cf, prediction = ts_tweaking_reversible_cf(
     dataset=dataset,
     model=model,
     target=1
+)
+```
+
+---
+
+#### FFT-CF - Fourier Transform Counterfactual Explanations
+**Implementation:** `cfts/cf_fft_cf/fft_cf.py`
+
+**Description:** Frequency-based counterfactual generation using Fast Fourier Transform (FFT) to decompose time series into frequency components, then iteratively modifying frequency coefficients (amplitude and/or phase) to find counterfactual explanations that change the model's prediction while maintaining temporal structure and realism.
+
+**Key Features:**
+- **Frequency domain manipulation**: Modifies amplitude and/or phase of frequency components
+- **Temporal coherence**: Preserves overall temporal patterns through frequency domain operations
+- **Selective bands**: Can focus on specific frequency bands (low/high/mid frequencies)
+- **Dual strategies**: Greedy search variant and gradient-based optimization variant
+- **Efficient for long series**: FFT complexity is O(n log n)
+
+**Reference:**
+```bibtex
+@inproceedings{delaney2021instance,
+  title={Instance-Based Counterfactual Explanations for Time Series Classification},
+  author={Delaney, Eoin and Greene, Derek and Keane, Mark T},
+  booktitle={International Conference on Case-Based Reasoning},
+  pages={32--47},
+  year={2021},
+  organization={Springer},
+  note={Discusses frequency domain manipulations for counterfactuals}
+}
+```
+
+**Links:**
+- Related Repository: [https://github.com/e-delaney/Instance-Based_CFE_TSC](https://github.com/e-delaney/Instance-Based_CFE_TSC)
+- FFT Documentation: [NumPy FFT](https://numpy.org/doc/stable/reference/routines.fft.html)
+
+**Usage Example:**
+```python
+from cfts.cf_fft_cf import fft_cf, fft_gradient_cf
+
+# Greedy search variant with amplitude modification
+cf, prediction = fft_cf(
+    sample=sample,
+    dataset=dataset,
+    model=model,
+    target_class=1,
+    frequency_bands="all",  # "all", "low", "high", "mid"
+    modification_strategy="amplitude",  # "amplitude", "phase", "both"
+    step_size=0.05,
+    lambda_proximity=0.1,
+    max_iterations=1000
+)
+
+# Gradient-based optimization variant
+cf, prediction = fft_gradient_cf(
+    sample=sample,
+    dataset=dataset,
+    model=model,
+    target_class=1,
+    learning_rate=0.01,
+    lambda_proximity=0.1,
+    lambda_smoothness=0.05,
+    max_iterations=500
 )
 ```
 
@@ -1279,69 +1341,6 @@ cf, prediction = cem_cf(
     autoencoder=None,
     kappa=0.5,
     beta=0.1
-)
-```
-
----
-
-### Frequency-Domain Methods
-
-#### 22. FFT-CF - Fourier Transform Counterfactual Explanations
-**Implementation:** `cfts/cf_fft_cf/fft_cf.py`
-
-**Description:** Frequency-based counterfactual generation using Fast Fourier Transform (FFT) to decompose time series into frequency components, then iteratively modifying frequency coefficients (amplitude and/or phase) to find counterfactual explanations that change the model's prediction while maintaining temporal structure and realism.
-
-**Key Features:**
-- **Frequency domain manipulation**: Modifies amplitude and/or phase of frequency components
-- **Temporal coherence**: Preserves overall temporal patterns through frequency domain operations
-- **Selective bands**: Can focus on specific frequency bands (low/high/mid frequencies)
-- **Dual strategies**: Greedy search variant and gradient-based optimization variant
-- **Efficient for long series**: FFT complexity is O(n log n)
-
-**Reference:**
-```bibtex
-@inproceedings{delaney2021instance,
-  title={Instance-Based Counterfactual Explanations for Time Series Classification},
-  author={Delaney, Eoin and Greene, Derek and Keane, Mark T},
-  booktitle={International Conference on Case-Based Reasoning},
-  pages={32--47},
-  year={2021},
-  organization={Springer},
-  note={Discusses frequency domain manipulations for counterfactuals}
-}
-```
-
-**Links:**
-- Related Repository: [https://github.com/e-delaney/Instance-Based_CFE_TSC](https://github.com/e-delaney/Instance-Based_CFE_TSC)
-- FFT Documentation: [NumPy FFT](https://numpy.org/doc/stable/reference/routines.fft.html)
-
-**Usage Example:**
-```python
-from cfts.cf_fft_cf import fft_cf, fft_gradient_cf
-
-# Greedy search variant with amplitude modification
-cf, prediction = fft_cf(
-    sample=sample,
-    dataset=dataset,
-    model=model,
-    target_class=1,
-    frequency_bands="all",  # "all", "low", "high", "mid"
-    modification_strategy="amplitude",  # "amplitude", "phase", "both"
-    step_size=0.05,
-    lambda_proximity=0.1,
-    max_iterations=1000
-)
-
-# Gradient-based optimization variant
-cf, prediction = fft_gradient_cf(
-    sample=sample,
-    dataset=dataset,
-    model=model,
-    target_class=1,
-    learning_rate=0.01,
-    lambda_proximity=0.1,
-    lambda_smoothness=0.05,
-    max_iterations=500
 )
 ```
 

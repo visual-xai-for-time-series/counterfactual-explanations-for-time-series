@@ -18,6 +18,31 @@ import sys
 script_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, f'{script_path}/../')
 
+# ---------------------------------------------------------------------------
+# Logging – tee stdout/stderr to a file alongside terminal output
+# ---------------------------------------------------------------------------
+class _Tee:
+    """Mirror writes to both the original stream and a log file."""
+    def __init__(self, stream, logfile):
+        self._stream = stream
+        self._log = open(logfile, 'w', buffering=1)
+    def write(self, data):
+        self._stream.write(data)
+        self._log.write(data)
+    def flush(self):
+        self._stream.flush()
+        self._log.flush()
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+_log_dir = os.path.join(script_path, 'logs')
+os.makedirs(_log_dir, exist_ok=True)
+_log_file = os.path.join(_log_dir, 'example_univariate.log')
+sys.stdout = _Tee(sys.stdout, _log_file)
+sys.stderr = _Tee(sys.stderr, _log_file)
+print(f'Logging to: {_log_file}')
+# ---------------------------------------------------------------------------
+
 
 import base.model as bm
 import base.data as bd

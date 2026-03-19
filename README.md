@@ -41,14 +41,13 @@ python metrics_evaluation_example.py  # Comprehensive metrics
 
 ## Implemented Algorithms
 
-This library implements **27 state-of-the-art counterfactual explanation methods** for time series classification, organized into:
+This library implements **28 state-of-the-art counterfactual explanation methods** for time series classification, organized into:
 
-- **Optimization-Based Methods**: Wachter, COMTE, TSCF
+- **Optimization-Based Methods**: Wachter, COMTE, TSCF, TS-Tweaking, FFT-CF
 - **Evolutionary Methods**: MOC/DANDL, TSEvo, Multi-SpaCE, Sub-SpaCE
 - **Instance-Based Methods**: Native Guide, CELS/M-CELS, AB-CF
 - **Latent Space Methods**: CGM, CounTS, Latent-CF, LASTS, GLACIER
-- **Segment-Based Methods**: SETS, SG-CF, DisCOX, CFWoT
-- **Frequency-Domain Methods**: FFT-CF
+- **Segment-Based Methods**: SETS, SG-CF, DisCOX, CFWoT, TS-CEM
 - **Hybrid Methods**: SPARCE, Time-CF, TeRCE, MG-CF, TimeX, TimeX++
 
 📚 **For detailed descriptions, key features, academic references, and code examples for each method, see [REFERENCES.md](REFERENCES.md)**
@@ -197,6 +196,7 @@ counterfactual-explanations-for-time-series/
 ├── cfts/                          # Main library
 │   ├── cf_ab_cf/                 # AB-CF implementation
 │   ├── cf_cels/                  # CELS implementation
+│   ├── cf_cem/                   # TS-CEM implementation
 │   ├── cf_cfwot/                 # CFWoT implementation
 │   ├── cf_cgm/                   # CGM implementation
 │   ├── cf_comte/                 # COMTE implementation
@@ -217,6 +217,9 @@ counterfactual-explanations-for-time-series/
 │   ├── cf_subspace/              # Sub-SpaCE implementation
 │   ├── cf_terce/                 # TERCE implementation
 │   ├── cf_time_cf/               # Time-CF implementation
+│   ├── cf_timex/                 # TimeX implementation
+│   ├── cf_timex_plus_plus/       # TimeX++ implementation
+│   ├── cf_ts_tweaking/           # TS-Tweaking implementation
 │   ├── cf_tscf/                  # TSCF implementation
 │   ├── cf_tsevo/                 # TSEvo implementation
 │   ├── cf_wachter/               # Wachter et al. implementation
