@@ -45,6 +45,30 @@ from cfts.cf_fft_cf import (
 from cfts.metrics.keane import validity, proximity, compactness, evaluate_keane_metrics
 
 
+def _mark_best_bar(ax, values, higher_is_better=True):
+    if not values:
+        return
+
+    best_idx = int(np.argmax(values) if higher_is_better else np.argmin(values))
+    best_bar = ax.patches[best_idx]
+    best_bar.set_edgecolor('gold')
+    best_bar.set_linewidth(2.5)
+    best_bar.set_hatch('//')
+
+    x_pos = best_bar.get_x() + best_bar.get_width() / 2
+    y_pos = best_bar.get_height()
+    ax.annotate(
+        'BEST',
+        xy=(x_pos, y_pos),
+        xytext=(0, 6),
+        textcoords='offset points',
+        ha='center',
+        va='bottom',
+        fontweight='bold',
+        color='gold',
+    )
+
+
 def main():
     print("=" * 90)
     print(" FFT-CF Variants Keane et al. (2021) Batch Evaluation - FordA")
@@ -356,6 +380,7 @@ def main():
         axes[0, 0].axhline(y=np.mean(validities), color='orange', linestyle='--', 
                           linewidth=2, label=f'Mean: {np.mean(validities):.3f}')
         axes[0, 0].legend()
+        _mark_best_bar(axes[0, 0], validities, higher_is_better=True)
         
         # Proximity
         colors_prox = ['green' if p == min(proximities) else 'lightcoral' for p in proximities]
@@ -368,6 +393,7 @@ def main():
         axes[0, 1].axhline(y=np.mean(proximities), color='orange', linestyle='--',
                           linewidth=2, label=f'Mean: {np.mean(proximities):.2f}')
         axes[0, 1].legend()
+        _mark_best_bar(axes[0, 1], proximities, higher_is_better=False)
         
         # Compactness
         colors_comp = ['purple' if c == max(compactnesses) else 'lightgreen' for c in compactnesses]
@@ -380,6 +406,7 @@ def main():
         axes[1, 0].axhline(y=np.mean(compactnesses), color='orange', linestyle='--',
                           linewidth=2, label=f'Mean: {np.mean(compactnesses):.1f}%')
         axes[1, 0].legend()
+        _mark_best_bar(axes[1, 0], compactnesses, higher_is_better=True)
         
         # Overall score
         colors_overall = ['gold' if o == max(overalls) else 'plum' for o in overalls]
@@ -393,6 +420,7 @@ def main():
         axes[1, 1].axhline(y=np.mean(overalls), color='orange', linestyle='--',
                           linewidth=2, label=f'Mean: {np.mean(overalls):.3f}')
         axes[1, 1].legend()
+        _mark_best_bar(axes[1, 1], overalls, higher_is_better=True)
     
     plt.tight_layout()
     output_file = os.path.join(script_path, 'fft_cf_keane_metrics.png')

@@ -34,20 +34,22 @@ cd examples
 python run_all.py
 
 # Run individual examples
-python example_univariate.py          # FordA dataset
-python example_multivariate.py   # Multi-channel Arabic digits
-python metrics_evaluation_example.py  # Comprehensive metrics
+python example_univariate.py             # FordA dataset
+python example_univariate_ecg.py         # ECG200 dataset
+python example_univariate_faultdetectiona.py  # FaultDetectionA dataset
+python example_multivariate.py           # Multi-channel Arabic digits
+python example_metrics_evaluation.py     # Comprehensive metrics
 ```
 
 ## Implemented Algorithms
 
-This library implements **28 state-of-the-art counterfactual explanation methods** for time series classification, organized into:
+This library implements **30 state-of-the-art counterfactual explanation methods** for time series classification, organized into:
 
 - **Optimization-Based Methods**: Wachter, COMTE, TSCF, TS-Tweaking, FFT-CF
 - **Evolutionary Methods**: MOC/DANDL, TSEvo, Multi-SpaCE, Sub-SpaCE
-- **Instance-Based Methods**: Native Guide, CELS/M-CELS, AB-CF
+- **Instance-Based Methods**: Native Guide, CELS/M-CELS, AB-CF, CONFETTI
 - **Latent Space Methods**: CGM, CounTS, Latent-CF, LASTS, GLACIER
-- **Segment-Based Methods**: SETS, SG-CF, DisCOX, CFWoT, TS-CEM
+- **Segment-Based Methods**: SETS, SG-CF, DisCOX, CFWoT, TS-CEM, FastPACE
 - **Hybrid Methods**: SPARCE, Time-CF, TeRCE, MG-CF, TimeX, TimeX++
 
 📚 **For detailed descriptions, key features, academic references, and code examples for each method, see [REFERENCES.md](REFERENCES.md)**
@@ -95,9 +97,11 @@ The library includes a complete suite of metrics for evaluating counterfactual q
 ## Examples and Datasets
 
 ### Available Examples
-- **`example_univariate.py`**: FordA automotive dataset (UCR Archive)
-- **`example_multivariate.py`**: Multi-channel spoken Arabic digits
-- **`metrics_evaluation_example.py`**: Comprehensive metrics demonstration
+- **`example_univariate.py`**: FordA automotive fault detection dataset (UCR Archive)
+- **`example_univariate_ecg.py`**: ECG200 electrocardiogram dataset (UCR Archive)
+- **`example_univariate_faultdetectiona.py`**: FaultDetectionA electromechanical drive dataset (3-class)
+- **`example_multivariate.py`**: Multi-channel spoken Arabic digits (13 channels)
+- **`example_metrics_evaluation.py`**: Comprehensive metrics evaluation across all 30+ algorithms
 
 ### Supported Datasets
 - **UCR Time Series Archive**: Automatic download and preprocessing
@@ -105,8 +109,10 @@ The library includes a complete suite of metrics for evaluating counterfactual q
 - **Custom Datasets**: Easy integration with custom time series data
 
 ### Pre-trained Models
-- `simple_cnn_2.pth`: Binary classification (FordA)
-- `cnn_multi_arabicdigits_10ch.pth`: Multi-class, multi-channel
+- `simple_cnn_forda_2.pth`: Binary classification (FordA)
+- `simple_cnn_ecg200_2.pth`: Binary classification (ECG200)
+- `simple_cnn_faultdetectiona_3.pth`: 3-class classification (FaultDetectionA)
+- `cnn_multi_arabicdigits_10ch.pth`: 10-class multi-channel (Arabic Digits)
 
 ## Visualization Examples
 
@@ -231,10 +237,12 @@ counterfactual-explanations-for-time-series/
 │       ├── diversity.py          # Diversity metrics
 │       └── stability.py          # Stability metrics
 ├── examples/                      # Usage examples
-│   ├── example_univariate.py     # FordA dataset example
-│   ├── example_multivariate.py   # Arabic digits example
-│   ├── metrics_evaluation_example.py  # Metrics demo
-│   └── run_all.py               # Execute all examples
+│   ├── example_univariate.py              # FordA dataset example
+│   ├── example_univariate_ecg.py          # ECG200 dataset example
+│   ├── example_univariate_faultdetectiona.py  # FaultDetectionA example
+│   ├── example_multivariate.py            # Arabic digits example
+│   ├── example_metrics_evaluation.py      # Comprehensive metrics demo
+│   └── run_all.py                         # Execute all examples
 ├── models/                       # Pre-trained models
 └── requirements.txt              # Dependencies
 ```

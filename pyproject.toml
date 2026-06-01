@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "counterfactuals-for-time-series"
-version = "0.1.5"
+version = "0.1.6"
 description = "Counterfactual explanation algorithms for time-series models (Wachter, Native-Guide, etc.)"
 readme = "README.md"
 requires-python = ">=3.9"

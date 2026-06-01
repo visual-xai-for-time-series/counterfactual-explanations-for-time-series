@@ -11,7 +11,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cfts.metrics import (
     l2_distance, prediction_change, percentage_changed_points,
-    temporal_consistency, CounterfactualEvaluator
+    temporal_consistency, CounterfactualEvaluator,
+    compare_dtw_implementations_random_data
 )
 
 
@@ -112,6 +113,22 @@ def test_edge_cases():
         print(f"✓ Empty arrays raise appropriate error: {type(e).__name__}")
 
 
+def test_dtw_comparison_utility():
+    """Test DTW implementation comparison utility on random data."""
+    print("\nTesting DTW comparison utility...")
+
+    results = compare_dtw_implementations_random_data(
+        n_runs=2,
+        series_length=16,
+        seed=123,
+        radius=1
+    )
+
+    assert isinstance(results, dict), "Comparison results should be a dictionary"
+    assert len(results) > 0, "Comparison results should include implementations"
+    print(f"✓ DTW comparison returned {len(results)} implementation summaries")
+
+
 if __name__ == "__main__":
     print("=== Testing Counterfactual Metrics ===\n")
     
@@ -119,6 +136,7 @@ if __name__ == "__main__":
         test_basic_metrics()
         test_evaluator()
         test_edge_cases()
+        test_dtw_comparison_utility()
         
         print("\n=== All Tests Passed! ===")
         

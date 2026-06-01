@@ -41,6 +41,30 @@ from cfts.cf_fft_cf import (
 )
 
 
+def _mark_best_bar(ax, values, higher_is_better=True):
+    if not values:
+        return
+
+    best_idx = int(np.argmax(values) if higher_is_better else np.argmin(values))
+    best_bar = ax.patches[best_idx]
+    best_bar.set_edgecolor('gold')
+    best_bar.set_linewidth(2.5)
+    best_bar.set_hatch('//')
+
+    x_pos = best_bar.get_x() + best_bar.get_width() / 2
+    y_pos = best_bar.get_height()
+    ax.annotate(
+        'BEST',
+        xy=(x_pos, y_pos),
+        xytext=(0, 6),
+        textcoords='offset points',
+        ha='center',
+        va='bottom',
+        fontweight='bold',
+        color='gold',
+    )
+
+
 def main():
     print("=" * 90)
     print(" FFT-CF Variants Batch Evaluation - FordA Test Dataset")
@@ -287,6 +311,7 @@ def main():
     axes[0, 0].axhline(y=np.mean(success_rates), color='orange', linestyle='--', 
                        linewidth=2, label=f'Mean: {np.mean(success_rates):.1f}%')
     axes[0, 0].legend()
+    _mark_best_bar(axes[0, 0], success_rates, higher_is_better=True)
     
     # Average distances (only for successful CFs)
     valid_dists = [d for d in avg_dists if d > 0]
@@ -303,6 +328,7 @@ def main():
         axes[0, 1].axhline(y=np.mean(valid_dists), color='orange', linestyle='--',
                           linewidth=2, label=f'Mean: {np.mean(valid_dists):.2f}')
         axes[0, 1].legend()
+        _mark_best_bar(axes[0, 1], valid_dists, higher_is_better=False)
     
     # Average confidences
     valid_confs = [c for c in avg_confs if c > 0]
@@ -319,6 +345,7 @@ def main():
         axes[1, 0].axhline(y=np.mean(valid_confs), color='orange', linestyle='--',
                           linewidth=2, label=f'Mean: {np.mean(valid_confs):.3f}')
         axes[1, 0].legend()
+        _mark_best_bar(axes[1, 0], valid_confs, higher_is_better=True)
     
     # Average times
     colors_time = ['red' if t == min(avg_times) else 'plum' for t in avg_times]
@@ -331,6 +358,7 @@ def main():
     axes[1, 1].axhline(y=np.mean(avg_times), color='orange', linestyle='--',
                       linewidth=2, label=f'Mean: {np.mean(avg_times):.3f}s')
     axes[1, 1].legend()
+    _mark_best_bar(axes[1, 1], avg_times, higher_is_better=False)
     
     plt.tight_layout()
     output_file = os.path.join(script_path, 'fft_cf_batch_evaluation.png')

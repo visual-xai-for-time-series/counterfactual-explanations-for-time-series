@@ -31,6 +31,30 @@ from cfts.cf_fft_cf import (
 )
 
 
+def _mark_best_barh(ax, values, higher_is_better=True):
+    if not values:
+        return
+
+    best_idx = int(np.argmax(values) if higher_is_better else np.argmin(values))
+    best_bar = ax.patches[best_idx]
+    best_bar.set_edgecolor('gold')
+    best_bar.set_linewidth(2.5)
+    best_bar.set_hatch('//')
+
+    x_pos = best_bar.get_width()
+    y_pos = best_bar.get_y() + best_bar.get_height() / 2
+    ax.annotate(
+        'BEST',
+        xy=(x_pos, y_pos),
+        xytext=(6, 0),
+        textcoords='offset points',
+        va='center',
+        ha='left',
+        fontweight='bold',
+        color='gold',
+    )
+
+
 class NumpyDatasetWrapper:
     """Wrapper to make numpy array compatible with FFT-CF methods that expect iterables."""
     def __init__(self, data):
@@ -253,6 +277,7 @@ def main():
         axes[0, 0].set_xlim([0, 105])
         for i, v in enumerate(success_rates):
             axes[0, 0].text(v + 1, i, f'{v:.1f}%', va='center')
+        _mark_best_barh(axes[0, 0], success_rates, higher_is_better=True)
         
         # Confidence
         confidences = [plot_results[n]['avg_confidence'] for n in names]
@@ -262,6 +287,7 @@ def main():
         axes[0, 1].set_xlim([0, 1.0])
         for i, v in enumerate(confidences):
             axes[0, 1].text(v + 0.02, i, f'{v:.3f}', va='center')
+        _mark_best_barh(axes[0, 1], confidences, higher_is_better=True)
         
         # Distance
         distances = [plot_results[n]['avg_distance'] for n in names]
@@ -270,6 +296,7 @@ def main():
         axes[1, 0].set_title('Average Distance by Variant')
         for i, v in enumerate(distances):
             axes[1, 0].text(v + 0.5, i, f'{v:.1f}', va='center')
+        _mark_best_barh(axes[1, 0], distances, higher_is_better=False)
         
         # Execution time
         times = [plot_results[n]['avg_time'] for n in names]
@@ -278,6 +305,7 @@ def main():
         axes[1, 1].set_title('Average Execution Time by Variant')
         for i, v in enumerate(times):
             axes[1, 1].text(v + 0.001, i, f'{v:.3f}s', va='center')
+        _mark_best_barh(axes[1, 1], times, higher_is_better=False)
         
         plt.tight_layout()
         output_path = "fft_cf_univariate_evaluation.png"

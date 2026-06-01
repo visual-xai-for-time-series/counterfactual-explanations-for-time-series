@@ -23,6 +23,12 @@ __all__ = [
     # Proximity metrics
     'l2_distance',
     'dtw_distance', 
+    'dtw_distance_fast_dtaidistance',
+    'fastdtw_distance_fastdtw',
+    'fastdtw_distance_distancia',
+    'dtw_distance_tslearn',
+    'dtw_distance_pyts',
+    'compare_dtw_implementations_random_data',
     'frechet_distance',
     'manhattan_distance',
     'normalized_distance',

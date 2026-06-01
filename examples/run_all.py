@@ -127,6 +127,7 @@ def check_requirements():
         'example_multivariate.py',
         'example_univariate.py',
         'example_univariate_ecg.py',
+        'example_univariate_faultdetectiona.py',
         'example_metrics_evaluation.py'
     ]
     
@@ -173,6 +174,7 @@ def main():
         ('example_multivariate.py', 'Arabic Digits Counterfactual Examples'),
         ('example_univariate.py', 'FordA Dataset Counterfactual Examples'),
         ('example_univariate_ecg.py', 'ECG200 Dataset Counterfactual Examples'),
+        ('example_univariate_faultdetectiona.py', 'FaultDetectionA Dataset Counterfactual Examples'),
         ('example_metrics_evaluation.py', 'Comprehensive Metrics Evaluation')
     ]
     
@@ -233,7 +235,8 @@ def main():
     generated_files = [
         'counterfactuals_arabic_digits.png',
         'counterfactuals_forda.png',
-        'counterfactuals_ecg200.png'
+        'counterfactuals_ecg200.png',
+        'counterfactuals_faultdetectiona.png'
     ]
     
     for filename in generated_files:

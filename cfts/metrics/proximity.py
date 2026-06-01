@@ -6,13 +6,43 @@ time series using various distance measures suitable for time series data.
 """
 
 import numpy as np
-from typing import Optional
+from typing import Optional, Dict, Any
+import time
 from scipy.spatial.distance import euclidean, mahalanobis as scipy_mahalanobis
 try:
     from dtaidistance import dtw
     DTW_AVAILABLE = True
 except ImportError:
     DTW_AVAILABLE = False
+
+try:
+    from fastdtw import fastdtw as fastdtw_function
+    FASTDTW_AVAILABLE = True
+except ImportError:
+    FASTDTW_AVAILABLE = False
+
+try:
+    from distancia import FastDTW as DistanciaFastDTW
+    DISTANCIA_FASTDTW_AVAILABLE = True
+except ImportError:
+    DISTANCIA_FASTDTW_AVAILABLE = False
+
+try:
+    from tslearn.metrics import dtw as tslearn_dtw
+    TSLEARN_DTW_AVAILABLE = True
+except ImportError:
+    TSLEARN_DTW_AVAILABLE = False
+
+try:
+    from pyts.metrics import dtw as pyts_dtw
+    PYTS_DTW_AVAILABLE = True
+except ImportError:
+    PYTS_DTW_AVAILABLE = False
+
+
+def _flatten_time_series(ts: np.ndarray) -> np.ndarray:
+    """Flatten multidimensional time series to 1D for distance backends that expect vectors."""
+    return ts.flatten() if ts.ndim > 1 else ts
 
 
 def l2_distance(original_ts: np.ndarray, counterfactual_ts: np.ndarray) -> float:
@@ -57,15 +87,209 @@ def dtw_distance(original_ts: np.ndarray, counterfactual_ts: np.ndarray) -> floa
     if not DTW_AVAILABLE:
         raise ImportError("dtaidistance package is required for DTW distance. Install with: pip install dtaidistance")
     
-    # Flatten if multidimensional
-    if original_ts.ndim > 1:
-        original_flat = original_ts.flatten()
-        cf_flat = counterfactual_ts.flatten()
-    else:
-        original_flat = original_ts
-        cf_flat = counterfactual_ts
+    original_flat = _flatten_time_series(original_ts)
+    cf_flat = _flatten_time_series(counterfactual_ts)
     
     return float(dtw.distance(original_flat, cf_flat))
+
+
+def dtw_distance_fast_dtaidistance(original_ts: np.ndarray,
+                                   counterfactual_ts: np.ndarray,
+                                   use_pruning: bool = True) -> float:
+    """
+    Calculates DTW distance using `dtaidistance.dtw.distance_fast`.
+
+    Args:
+        original_ts: Original time series data
+        counterfactual_ts: Generated counterfactual time series
+        use_pruning: Enables dtaidistance pruning optimization (default: True)
+
+    Returns:
+        DTW distance between the time series
+    """
+    if not DTW_AVAILABLE:
+        raise ImportError("dtaidistance package is required for DTW distance. Install with: pip install dtaidistance")
+
+    original_flat = _flatten_time_series(original_ts)
+    cf_flat = _flatten_time_series(counterfactual_ts)
+    return float(dtw.distance_fast(original_flat, cf_flat, use_pruning=use_pruning))
+
+
+def fastdtw_distance_fastdtw(original_ts: np.ndarray,
+                             counterfactual_ts: np.ndarray,
+                             radius: int = 1) -> float:
+    """
+    Calculates FastDTW distance using the `fastdtw` package.
+
+    Args:
+        original_ts: Original time series data
+        counterfactual_ts: Generated counterfactual time series
+        radius: Neighborhood radius used by FastDTW approximation
+
+    Returns:
+        FastDTW distance between the time series
+    """
+    if not FASTDTW_AVAILABLE:
+        raise ImportError("fastdtw package is required. Install with: pip install fastdtw")
+
+    original_flat = _flatten_time_series(original_ts)
+    cf_flat = _flatten_time_series(counterfactual_ts)
+    distance, _ = fastdtw_function(original_flat, cf_flat, radius=radius)
+    return float(distance)
+
+
+def fastdtw_distance_distancia(original_ts: np.ndarray,
+                               counterfactual_ts: np.ndarray,
+                               radius: int = 1) -> float:
+    """
+    Calculates FastDTW distance using `distancia.FastDTW`.
+
+    Args:
+        original_ts: Original time series data
+        counterfactual_ts: Generated counterfactual time series
+        radius: Neighborhood radius used by FastDTW approximation
+
+    Returns:
+        FastDTW distance between the time series
+    """
+    if not DISTANCIA_FASTDTW_AVAILABLE:
+        raise ImportError("distancia package is required. Install with: pip install distancia")
+
+    original_flat = _flatten_time_series(original_ts)
+    cf_flat = _flatten_time_series(counterfactual_ts)
+
+    # Different distancia versions expose different call styles.
+    try:
+        calculator = DistanciaFastDTW(radius=radius)
+    except TypeError:
+        calculator = DistanciaFastDTW()
+
+    if hasattr(calculator, 'distance'):
+        return float(calculator.distance(original_flat, cf_flat))
+    if hasattr(calculator, 'calculate'):
+        return float(calculator.calculate(original_flat, cf_flat))
+    if callable(calculator):
+        return float(calculator(original_flat, cf_flat))
+
+    raise RuntimeError("Unsupported distancia.FastDTW API: expected distance/calculate/callable")
+
+
+def dtw_distance_tslearn(original_ts: np.ndarray, counterfactual_ts: np.ndarray) -> float:
+    """
+    Calculates DTW distance using `tslearn.metrics.dtw`.
+
+    Args:
+        original_ts: Original time series data
+        counterfactual_ts: Generated counterfactual time series
+
+    Returns:
+        DTW distance between the time series
+    """
+    if not TSLEARN_DTW_AVAILABLE:
+        raise ImportError("tslearn package is required. Install with: pip install tslearn")
+
+    original_flat = _flatten_time_series(original_ts)
+    cf_flat = _flatten_time_series(counterfactual_ts)
+    return float(tslearn_dtw(original_flat, cf_flat))
+
+
+def dtw_distance_pyts(original_ts: np.ndarray,
+                      counterfactual_ts: np.ndarray,
+                      dist: str = 'square') -> float:
+    """
+    Calculates DTW distance using `pyts.metrics.dtw`.
+
+    Args:
+        original_ts: Original time series data
+        counterfactual_ts: Generated counterfactual time series
+        dist: Pointwise distance used by pyts DTW (default: 'square')
+
+    Returns:
+        DTW distance between the time series
+    """
+    if not PYTS_DTW_AVAILABLE:
+        raise ImportError("pyts package is required. Install with: pip install pyts")
+
+    original_flat = _flatten_time_series(original_ts)
+    cf_flat = _flatten_time_series(counterfactual_ts)
+    return float(pyts_dtw(original_flat, cf_flat, dist=dist))
+
+
+def compare_dtw_implementations_random_data(n_runs: int = 5,
+                                            series_length: int = 256,
+                                            seed: Optional[int] = 42,
+                                            radius: int = 1) -> Dict[str, Dict[str, Any]]:
+    """
+    Compares DTW/FastDTW implementations on random univariate data.
+
+    For each implementation, reports mean distance, mean runtime, and success count.
+    Missing optional dependencies are reported with status='missing_dependency'.
+
+    Args:
+        n_runs: Number of random pairs to evaluate
+        series_length: Length of each generated time series
+        seed: Random seed for reproducibility (None for non-deterministic)
+        radius: Radius used for FastDTW-based implementations
+
+    Returns:
+        Dictionary with per-implementation summary statistics
+    """
+    rng = np.random.default_rng(seed)
+
+    methods = {
+        'dtaidistance_dtw': lambda x, y: dtw_distance(x, y),
+        'dtaidistance_dtw_fast': lambda x, y: dtw_distance_fast_dtaidistance(x, y),
+        'fastdtw_fastdtw': lambda x, y: fastdtw_distance_fastdtw(x, y, radius=radius),
+        'fastdtw_distancia': lambda x, y: fastdtw_distance_distancia(x, y, radius=radius),
+        'dtw_tslearn': lambda x, y: dtw_distance_tslearn(x, y),
+        'dtw_pyts': lambda x, y: dtw_distance_pyts(x, y)
+    }
+
+    summary: Dict[str, Dict[str, Any]] = {}
+    for method_name, method in methods.items():
+        distances = []
+        runtimes = []
+        errors = []
+
+        for _ in range(n_runs):
+            original = rng.normal(size=series_length)
+            counterfactual = rng.normal(size=series_length)
+
+            try:
+                start = time.perf_counter()
+                distance_value = method(original, counterfactual)
+                end = time.perf_counter()
+
+                distances.append(float(distance_value))
+                runtimes.append(float(end - start))
+            except ImportError as exc:
+                errors.append(str(exc))
+                break
+            except Exception as exc:
+                errors.append(f"{type(exc).__name__}: {exc}")
+
+        if len(distances) == 0:
+            status = 'missing_dependency' if errors and 'required' in errors[0] else 'error'
+            summary[method_name] = {
+                'status': status,
+                'n_success': 0,
+                'n_runs': n_runs,
+                'error': errors[0] if errors else 'No successful runs'
+            }
+            continue
+
+        summary[method_name] = {
+            'status': 'ok',
+            'n_success': len(distances),
+            'n_runs': n_runs,
+            'mean_distance': float(np.mean(distances)),
+            'std_distance': float(np.std(distances)),
+            'mean_runtime_seconds': float(np.mean(runtimes)),
+            'std_runtime_seconds': float(np.std(runtimes)),
+            'errors': errors
+        }
+
+    return summary
 
 
 def frechet_distance(original_ts: np.ndarray, counterfactual_ts: np.ndarray) -> float:
@@ -248,6 +472,12 @@ __all__ = [
     'l2_distance', 
     'manhattan_distance', 
     'dtw_distance', 
+    'dtw_distance_fast_dtaidistance',
+    'fastdtw_distance_fastdtw',
+    'fastdtw_distance_distancia',
+    'dtw_distance_tslearn',
+    'dtw_distance_pyts',
+    'compare_dtw_implementations_random_data',
     'frechet_distance',
     'normalized_distance',
     'mahalanobis_distance'

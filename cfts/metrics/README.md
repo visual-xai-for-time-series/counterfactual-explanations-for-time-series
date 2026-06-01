@@ -192,3 +192,84 @@ See `example_usage.py` for a complete demonstration of all metrics with syntheti
 
 ### Stability Metrics
 - **Higher is better**: All stability metrics (more robust algorithms preferred)
+
+## DTW Comparison Run Log
+
+Last run: 2026-05-29 22:01:26 UTC
+
+Command used:
+
+```bash
+. /workspaces/counterfactual-explanations-for-time-series/.venv/bin/activate && python - <<'PY'
+import importlib.util
+import json
+from pathlib import Path
+
+module_path = Path('/workspaces/counterfactual-explanations-for-time-series/cfts/metrics/proximity.py')
+spec = importlib.util.spec_from_file_location('proximity', module_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+results = module.compare_dtw_implementations_random_data(n_runs=5, series_length=256, seed=42, radius=1)
+print(json.dumps(results, indent=2, sort_keys=True))
+PY
+```
+
+Output:
+
+```json
+{
+    "dtaidistance_dtw": {
+        "errors": [],
+        "mean_distance": 11.264147001354381,
+        "mean_runtime_seconds": 0.046373208201839586,
+        "n_runs": 5,
+        "n_success": 5,
+        "status": "ok",
+        "std_distance": 0.6083049619736539,
+        "std_runtime_seconds": 0.013013047095188508
+    },
+    "dtaidistance_dtw_fast": {
+        "error": "CythonException: The compiled dtaidistance C library is not available.\nSee the documentation for alternative installation options.",
+        "n_runs": 5,
+        "n_success": 0,
+        "status": "error"
+    },
+    "dtw_pyts": {
+        "errors": [],
+        "mean_distance": 11.625591953021488,
+        "mean_runtime_seconds": 0.07020352520048619,
+        "n_runs": 5,
+        "n_success": 5,
+        "status": "ok",
+        "std_distance": 0.5602238385336366,
+        "std_runtime_seconds": 0.13814243738159135
+    },
+    "dtw_tslearn": {
+        "errors": [],
+        "mean_distance": 11.489314385292419,
+        "mean_runtime_seconds": 0.4123429584025871,
+        "n_runs": 5,
+        "n_success": 5,
+        "status": "ok",
+        "std_distance": 0.742454586081078,
+        "std_runtime_seconds": 0.8232472534648475
+    },
+    "fastdtw_distancia": {
+        "error": "distancia package is required. Install with: pip install distancia",
+        "n_runs": 5,
+        "n_success": 0,
+        "status": "missing_dependency"
+    },
+    "fastdtw_fastdtw": {
+        "errors": [],
+        "mean_distance": 196.81595576845967,
+        "mean_runtime_seconds": 0.005150258200592362,
+        "n_runs": 5,
+        "n_success": 5,
+        "status": "ok",
+        "std_distance": 9.898380741770325,
+        "std_runtime_seconds": 0.00032182888181660544
+    }
+}
+```

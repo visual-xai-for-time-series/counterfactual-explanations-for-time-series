@@ -137,3 +137,5 @@ dmypy.json
 publish_to_pypi.sh
 publish_to_pypi.bash
 .pypi*
+
+data/
