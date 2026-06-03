@@ -889,7 +889,8 @@ print('Start with Abstract (reference Gaussian noise template)')
 start_time = time.time()
 try:
     cf_abstract, prediction_abstract = abstract_cf_mod.abstract_cf(
-        sample, model,
+        sample, dataset_test, model,
+        target_class=target_class,
         max_iter=200,
         noise_scale=0.05,
         escalate_every=10,

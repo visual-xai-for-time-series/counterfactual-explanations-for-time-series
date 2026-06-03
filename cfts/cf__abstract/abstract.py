@@ -25,7 +25,7 @@ Minimal skeleton
         detach_to_numpy, numpy_to_torch, ensure_cl, revert_orientation,
     )
 
-    def my_cf(sample, model, max_iter=200, verbose=False):
+    def my_cf(sample, dataset, model, target_class=None, max_iter=200, verbose=False):
         device = next(model.parameters()).device
         sample_cl, ori = ensure_cl(np.asarray(sample, dtype=np.float32))
         C, L = sample_cl.shape
@@ -122,7 +122,7 @@ def revert_orientation(arr_cl: np.ndarray, ori: str) -> np.ndarray:
 
 def ensure_ncl(
     sample: np.ndarray,
-    dataset,
+    dataset: list | np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray, str]:
     """Normalise *sample* to (C, L) and *dataset* items to (N, C, L).
 
@@ -194,7 +194,9 @@ def ensure_ncl(
 
 def abstract_cf(
     sample: np.ndarray | list,
+    dataset: list | np.ndarray,
     model: torch.nn.Module,
+    target_class: int | None = None,
     max_iter: int = 200,
     noise_scale: float = 0.05,
     escalate_every: int = 10,
@@ -212,9 +214,14 @@ def abstract_cf(
     sample:
         Query time series.  Accepts 1-D ``(L,)``, ``(C, L)`` or ``(L, C)``
         NumPy arrays (or anything that converts with ``np.asarray``).
+    dataset: (Not used in the abstract_cf, but included in the signature for consistency with other methods.)
+        Sequence of (x, y) pairs where each *x* is a time series.  
+        May also be a NumPy array of shape (N, C, L).
     model:
         PyTorch classifier whose forward pass accepts ``(B, C, L)`` tensors
         and returns ``(B, num_classes)`` logits / probabilities.
+    target_class: (Not used in the abstract_cf, but included in the signature for consistency with other methods.)
+        The class to which the counterfactual should be perturbed.
     max_iter:
         Maximum number of perturbation attempts before giving up.
     noise_scale:

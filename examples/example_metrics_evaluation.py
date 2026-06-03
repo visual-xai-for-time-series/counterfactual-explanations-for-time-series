@@ -440,7 +440,7 @@ def create_algorithm_wrappers(dataset_test, model):
     def abstract_cf_wrapper(original_ts, target_class=None, **kwargs):
         try:
             cf, _ = abstract_mod.abstract_cf(
-                original_ts, model,
+                original_ts, dataset_test, model, target=target_class,
                 max_iter=100,
                 noise_scale=0.05,
                 escalate_every=10,
