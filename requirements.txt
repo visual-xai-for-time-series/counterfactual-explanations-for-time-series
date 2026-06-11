@@ -19,5 +19,5 @@ tslearn >= 0.6.3
 fastdtw >= 0.3.4
 distancia >= 0.0.85
 
-# For UMAP-based projection plots in the EMD ablation
+# For UMAP-based projection plots in the IMFACT ablation
 umap-learn >= 0.5.6

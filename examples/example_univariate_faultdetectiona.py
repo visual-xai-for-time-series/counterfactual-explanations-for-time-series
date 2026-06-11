@@ -101,7 +101,7 @@ from cfts.cf_cfwot.cfwot import cfwot
 import cfts.cf_cem.cem as cem
 import cfts.cf_ts_tweaking.ts_tweaking as ts_tweaking
 import cfts.cf__abstract.abstract as abstract_cf_mod
-import cfts.cf_emd.emd as emd_cf_mod
+import cfts.cf_imfact.imfact as imfact_cf_mod
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -355,7 +355,7 @@ methods = [
     'Sub-SpaCE', 'TSEvo', 'LASTS', 'TSCF', 'FASTPACE', 'TIME-CF',
     'SG-CF', 'MG-CF', 'Latent-CF', 'CGM', 'DiSCoX', 'CELS',
     'FFT-CF', 'TERCE', 'AB-CF', 'SPARCE', 'CounTS', 'CFWoT',
-    'CEM', 'TS-Tweaking', 'Abstract', 'EMD-CF'
+    'CEM', 'TS-Tweaking', 'Abstract', 'IMFACT-CF'
 ]
 
 # Initialize progress bar
@@ -905,22 +905,22 @@ except Exception as e:
 finally:
     progress.update(1)
 
-print('Start with EMD-CF')
+print('Start with IMFACT-CF')
 start_time = time.time()
 try:
-    cf_emd_cf, prediction_emd_cf = emd_cf_mod.emd_cf(
+    cf_imfact_cf, prediction_imfact_cf = imfact_cf_mod.imfact_cf(
         sample, dataset_test_ds, model,
         method='distance',
         step=0.05,
         max_iter=200,
         verbose=False,
     )
-    timing_results['EMD-CF'] = time.time() - start_time
-    print(f'EMD-CF completed in {timing_results["EMD-CF"]:.3f} seconds')
+    timing_results['IMFACT-CF'] = time.time() - start_time
+    print(f'IMFACT-CF completed in {timing_results["IMFACT-CF"]:.3f} seconds')
 except Exception as e:
-    cf_emd_cf, prediction_emd_cf = None, None
-    timing_results['EMD-CF'] = time.time() - start_time
-    print(f'EMD-CF failed: {type(e).__name__}: {str(e)[:100]}')
+    cf_imfact_cf, prediction_imfact_cf = None, None
+    timing_results['IMFACT-CF'] = time.time() - start_time
+    print(f'IMFACT-CF failed: {type(e).__name__}: {str(e)[:100]}')
 finally:
     progress.update(1)
 
@@ -982,7 +982,7 @@ print(format_combined_result('CFWoT', prediction_cfwot, timing_results['CFWoT'])
 print(format_combined_result('CEM', prediction_cem, timing_results['CEM']))
 print(format_combined_result('TS-Tweaking', prediction_ts_tweaking, timing_results['TS-Tweaking']))
 print(format_combined_result('Abstract', prediction_abstract, timing_results['Abstract']))
-print(format_combined_result('EMD-CF', prediction_emd_cf, timing_results['EMD-CF']))
+print(format_combined_result('IMFACT-CF', prediction_imfact_cf, timing_results['IMFACT-CF']))
 print('='*80)
 print()
 
@@ -1030,7 +1030,7 @@ cf_cfwot_pl      = None if cf_cfwot      is None else _to_channel_first(cf_cfwot
 cf_cem_pl        = None if cf_cem        is None else _to_channel_first(cf_cem)
 cf_ts_tweaking_pl = None if cf_ts_tweaking is None else _to_channel_first(cf_ts_tweaking)
 cf_abstract_pl   = None if cf_abstract   is None else _to_channel_first(cf_abstract)
-cf_emd_cf_pl     = None if cf_emd_cf     is None else _to_channel_first(cf_emd_cf)
+cf_imfact_cf_pl     = None if cf_imfact_cf     is None else _to_channel_first(cf_imfact_cf)
 
 
 def _fmt_pred(pred):
@@ -1077,7 +1077,7 @@ pred_cfwot_str       = _fmt_pred(prediction_cfwot)
 pred_cem_str         = _fmt_pred(prediction_cem)
 pred_ts_tweaking_str = _fmt_pred(prediction_ts_tweaking)
 pred_abstract_str    = _fmt_pred(prediction_abstract)
-pred_emd_cf_str      = _fmt_pred(prediction_emd_cf)
+pred_imfact_cf_str      = _fmt_pred(prediction_imfact_cf)
 pred_original_str    = _fmt_pred(original_pred_np)
 
 
@@ -1120,7 +1120,7 @@ success_cfwot       = _check_success(prediction_cfwot, target_class)
 success_cem         = _check_success(prediction_cem, target_class)
 success_ts_tweaking = _check_success(prediction_ts_tweaking, target_class)
 success_abstract    = _check_success(prediction_abstract, target_class)
-success_emd_cf      = _check_success(prediction_emd_cf, target_class)
+success_imfact_cf      = _check_success(prediction_imfact_cf, target_class)
 
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
@@ -1362,11 +1362,11 @@ else:
     axs[i].set_title('Abstract [✗ FAILED]', fontsize=8)
 i += 1
 
-if cf_emd_cf_pl is not None:
-    status = '✓' if success_emd_cf else '✗'
-    plot_channels(axs[i], cf_emd_cf_pl, f'EMD-CF [{status}] — pred: {pred_emd_cf_str}')
+if cf_imfact_cf_pl is not None:
+    status = '✓' if success_imfact_cf else '✗'
+    plot_channels(axs[i], cf_imfact_cf_pl, f'IMFACT-CF [{status}] — pred: {pred_imfact_cf_str}')
 else:
-    axs[i].set_title('EMD-CF [✗ FAILED]', fontsize=8)
+    axs[i].set_title('IMFACT-CF [✗ FAILED]', fontsize=8)
 i += 1
 
 # overlay plots: counterfactual vs original
@@ -1411,7 +1411,7 @@ overlay(axs[i], sample_pl, cf_cfwot_pl,       'CFWoT vs Original',             p
 overlay(axs[i], sample_pl, cf_cem_pl,         'CEM vs Original',               pred_cem_str,         success_cem);         i += 1
 overlay(axs[i], sample_pl, cf_ts_tweaking_pl, 'TS-Tweaking vs Original',       pred_ts_tweaking_str, success_ts_tweaking); i += 1
 overlay(axs[i], sample_pl, cf_abstract_pl,    'Abstract vs Original',          pred_abstract_str,    success_abstract);    i += 1
-overlay(axs[i], sample_pl, cf_emd_cf_pl,      'EMD-CF vs Original',            pred_emd_cf_str,      success_emd_cf)
+overlay(axs[i], sample_pl, cf_imfact_cf_pl,      'IMFACT-CF vs Original',            pred_imfact_cf_str,      success_imfact_cf)
 
 plt.tight_layout(rect=[0, 0.01, 1, 0.999])
 output_png = os.path.join(script_path, 'counterfactuals_faultdetectiona.png')
