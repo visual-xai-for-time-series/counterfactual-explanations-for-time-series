@@ -194,14 +194,16 @@ def ensure_ncl(
 
 def abstract_cf(
     sample: np.ndarray | list,
-    dataset: list | np.ndarray,
     model: torch.nn.Module,
     target_class: int | None = None,
+    dataset: list | np.ndarray = None,
     max_iter: int = 200,
     noise_scale: float = 0.05,
     escalate_every: int = 10,
     seed: int | None = None,
     verbose: bool = False,
+    *args,
+    **kwargs,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Reference counterfactual using iterative random Gaussian perturbation.
 
@@ -214,14 +216,14 @@ def abstract_cf(
     sample:
         Query time series.  Accepts 1-D ``(L,)``, ``(C, L)`` or ``(L, C)``
         NumPy arrays (or anything that converts with ``np.asarray``).
-    dataset: (Not used in the abstract_cf, but included in the signature for consistency with other methods.)
-        Sequence of (x, y) pairs where each *x* is a time series.  
-        May also be a NumPy array of shape (N, C, L).
     model:
         PyTorch classifier whose forward pass accepts ``(B, C, L)`` tensors
         and returns ``(B, num_classes)`` logits / probabilities.
     target_class: (Not used in the abstract_cf, but included in the signature for consistency with other methods.)
         The class to which the counterfactual should be perturbed.
+    dataset: (Not used in the abstract_cf, but included in the signature for consistency with other methods.)
+        Sequence of (x, y) pairs where each *x* is a time series.
+        May also be a NumPy array of shape (N, C, L).
     max_iter:
         Maximum number of perturbation attempts before giving up.
     noise_scale:

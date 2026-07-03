@@ -21,3 +21,6 @@ distancia >= 0.0.85
 
 # For UMAP-based projection plots in the IMFACT ablation
 umap-learn >= 0.5.6
+
+# For EMD-based IMF decomposition in IMFACT (optional decomposer="emd")
+emd-signal >= 0.6.0

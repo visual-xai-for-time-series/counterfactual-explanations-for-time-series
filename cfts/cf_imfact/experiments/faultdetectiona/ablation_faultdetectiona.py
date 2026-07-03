@@ -37,6 +37,7 @@ import torch
 import torch.nn as nn
 from aeon.datasets import load_classification
 from torch.utils.data import DataLoader
+from sklearn.preprocessing import OneHotEncoder
 
 from cfts.metrics import (
     autocorrelation_preservation,
@@ -49,7 +50,21 @@ from cfts.metrics import (
 
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+
+
+def _find_repo_root(start_dir: str) -> str:
+    current = os.path.abspath(start_dir)
+    while True:
+        if os.path.exists(os.path.join(current, "pyproject.toml")) and os.path.isdir(os.path.join(current, "cfts")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    raise FileNotFoundError("Could not locate repository root from script location.")
+
+
+REPO_ROOT = _find_repo_root(SCRIPT_DIR)
 EXAMPLES_DIR = os.path.join(REPO_ROOT, "examples")
 
 if REPO_ROOT not in sys.path:
@@ -58,12 +73,27 @@ if EXAMPLES_DIR not in sys.path:
     sys.path.insert(0, EXAMPLES_DIR)
 
 from examples.base.model import SimpleCNN
-from examples.base.data import get_UCR_UEA_dataloader
+from examples.base.data import TimeSeriesDataset, collate_sparse
 from cfts.cf_imfact.imfact import _psd, imfact_cf
 from scipy.spatial.distance import jensenshannon
 
 
+DATASET_NAME = "FaultDetectionA"
+
+
 CLASS_NAMES = {0: "undamaged", 1: "inner damaged", 2: "outer damaged"}
+
+
+def _get_ucr_uea_dataloader(dataset_name: str, split: str, batch_size: int = 256, shuffle: bool = True):
+    extract_path = os.path.join(REPO_ROOT, "data", "UCR")
+    X, y = load_classification(name=dataset_name, split=split, extract_path=extract_path)
+    encoder = OneHotEncoder(categories="auto", sparse_output=False)
+    y = encoder.fit_transform(np.expand_dims(y, axis=-1))
+    dataset = TimeSeriesDataset(X=X, y=y, name=dataset_name, mapping=encoder.categories_)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_sparse)
+    return dataloader, dataset
+
+
 BASE_METHOD_CONFIGS = {
     "distance": {"method": "distance"},
     "fingerprint": {"method": "fingerprint"},
@@ -733,8 +763,8 @@ def main():
     print(f"Device: {device}")
 
     print("\nLoading dataset...")
-    _, dataset_train = get_UCR_UEA_dataloader(dataset_name="FaultDetectionA", split="train")
-    _, dataset_test = get_UCR_UEA_dataloader(dataset_name="FaultDetectionA", split="test")
+    _, dataset_train = _get_ucr_uea_dataloader(dataset_name=DATASET_NAME, split="train")
+    _, dataset_test = _get_ucr_uea_dataloader(dataset_name=DATASET_NAME, split="test")
 
     if args.downsample > 1:
         dataset_train = DownsampledDataset(dataset_train, args.downsample)

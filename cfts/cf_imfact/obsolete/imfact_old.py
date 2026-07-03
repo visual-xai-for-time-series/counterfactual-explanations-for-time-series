@@ -7,7 +7,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-import cfts.cf_imfact.imfact_old as emd_old
+import cfts.cf_imfact.obsolete.imfact_old as emd_old
 
 class Chunk:
     def __init__(self, data, label, imfs=None):

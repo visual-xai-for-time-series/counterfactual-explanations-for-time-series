@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import Tuple
 
 import numpy as np
+
 import torch
+
 from scipy import signal
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import splrep, splev
 from scipy.signal import argrelextrema
 from scipy.spatial.distance import jensenshannon
 
@@ -22,8 +24,105 @@ from cfts.cf__abstract.abstract import (
 # IMFACT helpers
 # ---------------------------------------------------------------------------
 
-def _sift_imfs(data: np.ndarray, max_imfs: int = 10, max_sift: int = 100, sd_thresh: float = 0.2) -> np.ndarray:
-    """Extract Intrinsic Mode Functions from a 1-D signal via basic EMD sifting.
+def _rilling_pad(indmin: np.ndarray, indmax: np.ndarray, X: np.ndarray, pad_width: int = 2):
+    """Reflect boundary extrema using the Rilling (2003) method to reduce end effects.
+
+    Mirrors the logic of emd._sift_core._pad_extrema_rilling so that _sift_imfs
+    produces envelopes consistent with emd.sift.sift.
+
+    Returns (tmin, xmin, tmax, xmax) with padded extrema locations and values.
+    """
+    t = np.arange(len(X))
+
+    # --- LEFT boundary ---
+    if indmax[0] < indmin[0]:
+        if X[0] > X[indmin[0]]:
+            lmax = np.flipud(indmax[1:pad_width + 1])
+            lmin = np.flipud(indmin[:pad_width])
+            lsym = indmax[0]
+        else:
+            lmax = np.flipud(indmax[:pad_width])
+            lmin = np.r_[np.flipud(indmin[:pad_width - 1]), 0]
+            lsym = 0
+    else:
+        if X[0] > X[indmax[0]]:
+            lmax = np.flipud(indmax[:pad_width])
+            lmin = np.flipud(indmin[1:pad_width + 1])
+            lsym = indmin[0]
+        else:
+            lmin = np.flipud(indmin[:pad_width])
+            lmax = np.r_[np.flipud(indmax[:pad_width - 1]), 0]
+            lsym = 0
+
+    tlmin = 2 * lsym - lmin
+    tlmax = 2 * lsym - lmax
+
+    if tlmin[0] >= t[0] or tlmax[0] >= t[0]:
+        if lsym == indmax[0]:
+            lmax = np.flipud(indmax[:pad_width])
+        else:
+            lmin = np.flipud(indmin[:pad_width])
+        lsym = 0
+        tlmin = 2 * lsym - lmin
+        tlmax = 2 * lsym - lmax
+
+    # --- RIGHT boundary ---
+    if indmax[-1] < indmin[-1]:
+        if X[-1] < X[indmax[-1]]:
+            rmax = np.flipud(indmax[-pad_width:])
+            rmin = np.flipud(indmin[-pad_width - 1:-1])
+            rsym = indmin[-1]
+        else:
+            rmax = np.r_[X.shape[0] - 1, np.flipud(indmax[-(pad_width - 2):])]
+            rmin = np.flipud(indmin[-(pad_width - 1):])
+            rsym = X.shape[0] - 1
+    else:
+        if X[-1] > X[indmin[-1]]:
+            rmax = np.flipud(indmax[-pad_width - 1:-1])
+            rmin = np.flipud(indmin[-pad_width:])
+            rsym = indmax[-1]
+        else:
+            rmax = np.flipud(indmax[-(pad_width - 1):])
+            rmin = np.r_[X.shape[0] - 1, np.flipud(indmin[-(pad_width - 2):])]
+            rsym = X.shape[0] - 1
+
+    trmin = 2 * rsym - rmin
+    trmax = 2 * rsym - rmax
+
+    if trmin[-1] <= t[-1] or trmax[-1] <= t[-1]:
+        if rsym == indmax[-1]:
+            rmax = np.flipud(indmax[-pad_width - 1:-1])
+        else:
+            rmin = np.flipud(indmin[-pad_width - 1:-1])
+        rsym = len(X)
+        trmin = 2 * rsym - rmin
+        trmax = 2 * rsym - rmax
+
+    tmin = np.r_[tlmin, t[indmin], trmin]
+    tmax = np.r_[tlmax, t[indmax], trmax]
+    xmin = np.r_[X[lmin], X[indmin], X[rmin]]
+    xmax = np.r_[X[lmax], X[indmax], X[rmax]]
+    return tmin, xmin, tmax, xmax
+
+
+def _splrep_envelope(locs: np.ndarray, vals: np.ndarray, n: int) -> np.ndarray:
+    """Fit a B-spline through padded extrema and evaluate over [0, n)."""
+    t_range = np.arange(locs[0], locs[-1])
+    env = splev(t_range, splrep(locs, vals))
+    mask = (t_range >= 0) & (t_range < n)
+    return env[mask]
+
+
+def _sift_imfs(data: np.ndarray, max_imfs: int = 10, max_sift: int = 1000,
+               sd_thresh: float = 0.1, pad_width: int = 2,
+               sift_thresh: float = 1e-8) -> np.ndarray:
+    """Extract Intrinsic Mode Functions from a 1-D signal via EMD sifting.
+
+    Matches the behaviour of ``emd.sift.sift``:
+    - Rilling (2003) boundary padding to reduce end effects.
+    - B-spline envelope interpolation (``scipy.interpolate.splrep``).
+    - SD-based inner stopping criterion (default threshold 0.1).
+    - Energy-based outer stopping via ``sift_thresh``.
 
     Returns
     -------
@@ -31,7 +130,7 @@ def _sift_imfs(data: np.ndarray, max_imfs: int = 10, max_sift: int = 100, sd_thr
     """
     imfs = []
     residual = data.astype(np.float64).copy()
-    t = np.arange(len(data))
+    n = len(data)
 
     for _ in range(max_imfs):
         h = residual.copy()
@@ -40,18 +139,17 @@ def _sift_imfs(data: np.ndarray, max_imfs: int = 10, max_sift: int = 100, sd_thr
             max_idx = argrelextrema(h, np.greater)[0]
             min_idx = argrelextrema(h, np.less)[0]
 
-            if len(max_idx) < 2 or len(min_idx) < 2:
+            if len(max_idx) < pad_width + 1 or len(min_idx) < pad_width + 1:
                 break
 
-            max_t = np.r_[0, max_idx, len(h) - 1]
-            max_v = np.r_[h[max_idx[0]], h[max_idx], h[max_idx[-1]]]
-            min_t = np.r_[0, min_idx, len(h) - 1]
-            min_v = np.r_[h[min_idx[0]], h[min_idx], h[min_idx[-1]]]
+            try:
+                tmax, xmax, tmin, xmin = _rilling_pad(min_idx, max_idx, h, pad_width)
+                upper = _splrep_envelope(tmax, xmax, n)
+                lower = _splrep_envelope(tmin, xmin, n)
+            except (ValueError, TypeError):
+                break
 
-            upper = CubicSpline(max_t, max_v)(t)
-            lower = CubicSpline(min_t, min_v)(t)
             mean_env = (upper + lower) / 2.0
-
             prev_h = h.copy()
             h = h - mean_env
 
@@ -62,8 +160,11 @@ def _sift_imfs(data: np.ndarray, max_imfs: int = 10, max_sift: int = 100, sd_thr
         imfs.append(h)
         residual = residual - h
 
+        if np.sum(np.abs(residual)) < sift_thresh:
+            break
+
         n_ext = len(argrelextrema(residual, np.greater)[0]) + len(argrelextrema(residual, np.less)[0])
-        if n_ext < 2:
+        if n_ext < 2 * pad_width:
             break
 
     imfs.append(residual)
@@ -286,6 +387,18 @@ def _select_native_guides(
 #      unlocks one more IMF every few iterations.
 #   5. Reconstruct the signal and query the model; stop on a class flip.
 ####
+def _decompose(channel_data: np.ndarray, decomposer: str, max_imfs: int) -> np.ndarray:
+    """Decompose a 1-D channel into IMFs, returning shape ``(n_imfs, L)``."""
+    if decomposer == "sift_imfs":
+        return _sift_imfs(channel_data, max_imfs=max_imfs)
+    elif decomposer == "emd":
+        import emd as _emd
+        imfs = _emd.sift.sift(channel_data.astype(np.float64), max_imfs=max_imfs)
+        return imfs.T.astype(np.float32)  # (samples, n_imfs) → (n_imfs, samples)
+    else:
+        raise ValueError(f"decomposer must be 'sift_imfs' or 'emd', got '{decomposer}'")
+
+
 def imfact_cf(
     sample: np.ndarray,
     dataset,
@@ -298,6 +411,7 @@ def imfact_cf(
     coarse_stage_iters: int = 10,
     n_nuns: int = 1,
     nun_switch: str = "cycle",
+    decomposer: str = "sift_imfs",
     verbose: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """IMFACT-based counterfactual explanation for time series classification.
@@ -338,6 +452,10 @@ def imfact_cf(
         Switching rule when ``n_nuns > 1``. ``"cycle"`` rotates guides each
         iteration; ``"closest_psd"`` picks the currently closest guide in PSD
         space to the latest candidate signal.
+    decomposer:
+        EMD back-end to use for IMF extraction. ``"sift_imfs"`` uses the
+        built-in Rilling-padded sifter; ``"emd"`` delegates to
+        ``emd.sift.sift`` from the *emd-signal* package (must be installed).
     verbose:
         Print per-iteration diagnostics when ``True``.
 
@@ -350,6 +468,8 @@ def imfact_cf(
     """
     if method not in ("distance", "fingerprint", "variance", "extremes", "maxmin", "coarse_to_fine"):
         raise ValueError("method must be 'distance', 'fingerprint', 'variance', 'extremes', 'maxmin', or 'coarse_to_fine'")
+    if decomposer not in ("sift_imfs", "emd"):
+        raise ValueError("decomposer must be 'sift_imfs' or 'emd'")
     if nun_switch not in ("cycle", "closest_psd"):
         raise ValueError("nun_switch must be 'cycle' or 'closest_psd'")
     if n_nuns < 1:
@@ -405,11 +525,11 @@ def imfact_cf(
             )
 
     # --- IMF decomposition per channel --------------------------------------
-    src_imfs = [_sift_imfs(sample_cl[c], max_imfs=max_imfs) for c in range(C)]
+    src_imfs = [_decompose(sample_cl[c], decomposer, max_imfs) for c in range(C)]
     guide_imfs = []
     n_imfs_per_c = [len(src_imfs[c]) for c in range(C)]
     for g in guides:
-        g_imfs = [_sift_imfs(g[c], max_imfs=max_imfs) for c in range(C)]
+        g_imfs = [_decompose(g[c], decomposer, max_imfs) for c in range(C)]
         guide_imfs.append(g_imfs)
         for c in range(C):
             n_imfs_per_c[c] = max(n_imfs_per_c[c], len(g_imfs[c]))
