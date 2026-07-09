@@ -60,9 +60,11 @@ from cfts.metrics import (
     normalized_distance,
     percentage_changed_points,
     prediction_change,
+    temporal_consistency,
 )
 
 plt.style.use("seaborn-v0_8-darkgrid")
+plt.rcParams.update({"font.size": 14})
 
 METHOD_COLORS = {
     "imfact_variance_nun3": "#e63946",
@@ -199,7 +201,6 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
                 "pred_orig": pred_orig,
                 "target_class": target_class,
                 "pred_cf": None,
-                "success": False,
                 "l2_norm": np.nan,
                 "dtw_proximity": np.nan,
                 "normalized_distance": np.nan,
@@ -210,6 +211,8 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
                 "keane_proximity": np.nan,
                 "keane_compactness": np.nan,
                 "validity": 0.0,
+                "temporal_consistency": np.nan,
+                "confidence": np.nan,
                 "error": None,
             }
 
@@ -224,8 +227,10 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
                 continue
 
             cf = np.asarray(cf, dtype=np.float32)
-            pred_cf = int(np.argmax(np.asarray(pred_cf_scores).reshape(-1)))
-            success = pred_cf == target_class
+            _scores = np.asarray(pred_cf_scores).reshape(-1)
+            pred_cf = int(np.argmax(_scores))
+            _exp = np.exp(_scores - _scores.max())
+            cf_confidence = float(_exp[pred_cf] / _exp.sum())
 
             s_cf = to_channel_first(sample)
             c_cf = to_channel_first(cf)
@@ -240,7 +245,6 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
             records.append({
                 **base,
                 "pred_cf": pred_cf,
-                "success": bool(success),
                 "l2_norm": float(l2_distance(s_cf, c_cf)),
                 "dtw_proximity": float(dtw_distance(s_cf, c_cf)),
                 "normalized_distance": float(normalized_distance(s_cf.reshape(-1), c_cf.reshape(-1))),
@@ -251,6 +255,8 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
                 "keane_proximity": float(keane["proximity"]),
                 "keane_compactness": float(keane["compactness"]),
                 "validity": float(prediction_change(s_cf, c_cf, model_for_metrics, target_class=target_class)),
+                "temporal_consistency": float(temporal_consistency(c_cf)),
+                "confidence": cf_confidence,
             })
 
             all_cf_outputs[idx][method_name] = cf
@@ -263,14 +269,12 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
 # ---------------------------------------------------------------------------
 
 def build_summary(results_df: pd.DataFrame) -> pd.DataFrame:
-    successful_df = results_df[results_df["success"]].copy()
+    successful_df = results_df[results_df["validity"] == 1.0].copy()
     agg_all = (
         results_df.groupby("method", dropna=False)
         .agg(
             n_total=("sample_idx", "count"),
-            n_successful=("success", "sum"),
-            success_rate=("success", "mean"),
-            validity_mean=("validity", "mean"),
+            validity_rate=("validity", "mean"),
         )
         .reset_index()
     )
@@ -286,13 +290,13 @@ def build_summary(results_df: pd.DataFrame) -> pd.DataFrame:
             keane_validity_mean=("keane_validity", "mean"),
             keane_proximity_mean=("keane_proximity", "mean"),
             keane_compactness_mean=("keane_compactness", "mean"),
+            temporal_consistency_mean=("temporal_consistency", "mean"),
+            confidence_mean=("confidence", "mean"),
         )
         .reset_index()
     )
     summary = agg_all.merge(agg_suc, on="method", how="left")
-    summary["n_successful"] = summary["n_successful"].fillna(0).astype(int)
-    summary["success_rate"] = 100.0 * summary["success_rate"]
-    summary["validity_mean"] = summary["validity_mean"].fillna(0.0)
+    summary["validity_rate"] = summary["validity_rate"].fillna(0.0)
     return summary.sort_values("method").reset_index(drop=True)
 
 
@@ -316,8 +320,8 @@ def plot_bar_metrics(summary_df: pd.DataFrame, out_path: str) -> None:
     dtw_score = 1.0 / (1.0 + plot_df["dtw_proximity_mean"])
     norm_dist_score = 1.0 / (1.0 + plot_df["normalized_distance_mean"])
 
-    fig, axes = plt.subplots(3, 3, figsize=(16, 12))
-    _bar(axes[0, 0], plot_df["validity_mean"], "Validity (higher better)")
+    fig, axes = plt.subplots(4, 3, figsize=(16, 16))
+    _bar(axes[0, 0], plot_df["validity_rate"], "Validity (higher better)")
     _bar(axes[0, 1], plot_df["sparsity_mean"], "Sparsity (higher better)")
     _bar(axes[0, 2], plot_df["range_validity_mean"], "Range Validity (higher better)")
     _bar(axes[1, 0], plot_df["autocorr_mean"], "Autocorr Preservation (higher better)")
@@ -326,6 +330,9 @@ def plot_bar_metrics(summary_df: pd.DataFrame, out_path: str) -> None:
     _bar(axes[2, 0], l2_score, "L2 Proximity Score (higher better)")
     _bar(axes[2, 1], dtw_score, "DTW Proximity Score (higher better)")
     _bar(axes[2, 2], norm_dist_score, "Normalised Distance Score (higher better)")
+    _bar(axes[3, 0], plot_df["temporal_consistency_mean"], "Temporal Consistency (higher better)")
+    _bar(axes[3, 1], plot_df["confidence_mean"], "Confidence (higher better)")
+    _bar(axes[3, 2], plot_df["keane_proximity_mean"], "Keane Proximity (lower better)", ylim=(0, max(plot_df["keane_proximity_mean"].fillna(0).max() * 1.1, 0.01)))
 
     fig.suptitle("FaultDetectionA — IMFACT vs Native Guide vs Wachter", fontsize=13, y=1.01)
     plt.tight_layout()
@@ -341,14 +348,14 @@ def plot_umap(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: 
     )
     background_labels = np.array([to_class_index(dataset_test[i][1]) for i in range(len(dataset_test))])
 
-    sample_success_counts = (
+    sample_validity_counts = (
         results_df[results_df["sample_idx"].isin(selected_indices)]
-        .groupby("sample_idx")["success"]
+        .groupby("sample_idx")["validity"]
         .sum()
         .sort_values(ascending=False)
     )
-    full_success = [int(i) for i, c in sample_success_counts.items() if int(c) == len(METHOD_ORDER)]
-    rep_idx = full_success[0] if full_success else int(sample_success_counts.index[0])
+    full_success = [int(i) for i, c in sample_validity_counts.items() if float(c) == float(len(METHOD_ORDER))]
+    rep_idx = full_success[0] if full_success else int(sample_validity_counts.index[0])
 
     rep_payload = all_cf_outputs[rep_idx]
     rep_sample = to_channel_first(rep_payload["sample"]).reshape(1, -1)
@@ -368,7 +375,7 @@ def plot_umap(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: 
         row["method"]: {
             "l2": float(row["l2_norm"]),
             "dtw": float(row["dtw_proximity"]),
-            "success": bool(row["success"]),
+            "validity": float(row["validity"]) if not pd.isna(row["validity"]) else 0.0,
             "pred": int(row["pred_cf"]) if not pd.isna(row["pred_cf"]) else None,
         }
         for _, row in sample_results.iterrows()
@@ -393,7 +400,7 @@ def plot_umap(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: 
         m = metric_lookup.get(method_name, {})
         l2_val = m.get("l2", np.nan)
         dtw_val = m.get("dtw", np.nan)
-        worked = m.get("success", False)
+        worked = m.get("validity", 0.0) == 1.0
         pred_cf = m.get("pred", None)
 
         annotation_lines.append(
@@ -423,14 +430,14 @@ def plot_umap(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: 
 
 
 def plot_waveforms(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: list, out_path: str) -> None:
-    sample_success_counts = (
+    sample_validity_counts = (
         results_df[results_df["sample_idx"].isin(selected_indices)]
-        .groupby("sample_idx")["success"]
+        .groupby("sample_idx")["validity"]
         .sum()
         .sort_values(ascending=False)
     )
-    full_success = [int(i) for i, c in sample_success_counts.items() if int(c) == len(METHOD_ORDER)]
-    rep_idx = full_success[0] if full_success else int(sample_success_counts.index[0])
+    full_success = [int(i) for i, c in sample_validity_counts.items() if float(c) == float(len(METHOD_ORDER))]
+    rep_idx = full_success[0] if full_success else int(sample_validity_counts.index[0])
 
     rep_payload = all_cf_outputs[rep_idx]
     x = to_channel_first(rep_payload["sample"])[0]
@@ -438,7 +445,7 @@ def plot_waveforms(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indi
 
     sample_results = results_df[results_df["sample_idx"] == rep_idx]
     info_lookup = {
-        row["method"]: {"success": bool(row["success"]), "pred": int(row["pred_cf"]) if not pd.isna(row["pred_cf"]) else None}
+        row["method"]: {"validity": float(row["validity"]) if not pd.isna(row["validity"]) else 0.0, "pred": int(row["pred_cf"]) if not pd.isna(row["pred_cf"]) else None}
         for _, row in sample_results.iterrows()
     }
     orig_row = sample_results.iloc[0]
@@ -449,7 +456,7 @@ def plot_waveforms(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indi
     fig, axes = plt.subplots(n_rows, 1, figsize=(14, 2.8 * n_rows), sharex=True)
 
     status_parts = [
-        f"{m}: {'OK' if info_lookup.get(m, {}).get('success', False) else 'FAIL'}" for m in METHOD_ORDER
+        f"{m}: {'OK' if info_lookup.get(m, {}).get('validity', 0.0) == 1.0 else 'FAIL'}" for m in METHOD_ORDER
     ]
     fig.suptitle(
         f"Waveforms for FaultDetectionA sample {rep_idx} | true={true_label} | pred={initial_pred} | " + " | ".join(status_parts),
@@ -466,7 +473,7 @@ def plot_waveforms(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indi
         ax = axes[i]
         cf = rep_payload.get(method_name)
         info = info_lookup.get(method_name, {})
-        worked = info.get("success", False)
+        worked = info.get("validity", 0.0) == 1.0
         pred_cf = info.get("pred", None)
 
         ax.plot(x, label="original", color="black", linewidth=1.0, linestyle="--", alpha=0.25)
@@ -475,10 +482,6 @@ def plot_waveforms(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indi
         else:
             cf_line = to_channel_first(cf)[0]
             ax.plot(cf_line, label=method_name, linewidth=1.6, alpha=0.95, color="#1f77b4")
-            ax.fill_between(x_axis, x, cf_line, color="#1f77b4", alpha=0.18, linewidth=0)
-            diff_abs = np.abs(cf_line - x)
-            top_idx = np.argsort(diff_abs)[-3:] if diff_abs.size >= 3 else np.arange(diff_abs.size)
-            ax.scatter(x_axis[top_idx], cf_line[top_idx], s=18, color="#d62728", alpha=0.9, zorder=4)
 
         ax.set_title(f"{method_name} (pred={pred_cf}, true={true_label}, {'OK' if worked else 'FAIL'})")
         ax.set_ylabel("Amplitude")

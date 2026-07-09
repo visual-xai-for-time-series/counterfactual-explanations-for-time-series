@@ -33,6 +33,7 @@ import urllib.request
 from typing import Dict, List, Sequence, Tuple
 
 import matplotlib.pyplot as plt
+plt.rcParams.update({"font.size": 14})
 import numpy as np
 import umap
 import torch
@@ -43,10 +44,12 @@ from sklearn.preprocessing import OneHotEncoder
 
 from cfts.metrics import (
     autocorrelation_preservation,
+    dtw_distance,
     evaluate_keane_metrics,
     feature_range_validity,
     normalized_distance,
     percentage_changed_points,
+    prediction_change,
     temporal_consistency,
 )
 
@@ -432,7 +435,6 @@ def _evaluate_method(
     except Exception as exc:
         return {
             "method": method,
-            "success": False,
             "elapsed": time.time() - start_time,
             "error": f"{type(exc).__name__}: {exc}",
         }
@@ -460,9 +462,14 @@ def _evaluate_method(
         target_classes=int(target_class),
     )
 
+    s_ch = _to_channel_first(np.asarray(sample, dtype=np.float32))
+    c_ch = _to_channel_first(np.asarray(cf, dtype=np.float32))
+    dtw_dist = float(dtw_distance(s_ch, c_ch))
+    validity = float(prediction_change(s_ch, c_ch, _keane_model_predict, target_class=target_class))
+    sparsity = 1.0 - pct_changed / 100.0
+
     return {
         "method": method,
-        "success": success,
         "elapsed": elapsed,
         "pred_class": pred_class,
         "confidence": confidence,
@@ -472,6 +479,9 @@ def _evaluate_method(
         "temporal_consistency": temp_consistency,
         "range_validity": range_validity,
         "autocorr_preservation": autocorr,
+        "dtw_distance": dtw_dist,
+        "validity": validity,
+        "sparsity": sparsity,
         "keane_validity": float(keane_metrics["validity"]),
         "keane_proximity": float(keane_metrics["proximity"]),
         "keane_compactness": float(keane_metrics["compactness"]),
@@ -525,18 +535,18 @@ def _save_sample_line_plot(
 
     for ax, outcome in zip(axes[1:], outcomes):
         method = str(outcome["method"])
-        if outcome.get("success"):
+        if outcome.get("validity", 0.0) == 1.0:
             cf = _to_channel_first(outcome["counterfactual"])
             ax.plot(x, sample_cf[0], color="steelblue", linestyle="--", linewidth=1.2, label="original")
             ax.plot(x, cf[0], color="darkorange", linewidth=1.3, label="counterfactual")
             ax.set_title(
-                f"{method} [success] - pred: {outcome['pred_class']} ({_class_name(int(outcome['pred_class']))})",
+                f"{method} [valid] - pred: {outcome['pred_class']} ({_class_name(int(outcome['pred_class']))})",
                 fontsize=10,
             )
             ax.legend(loc="upper right", fontsize="small")
         else:
             ax.plot(x, sample_cf[0], color="steelblue", linestyle="--", linewidth=1.2, label="original")
-            ax.set_title(f"{method} [failed]", fontsize=10)
+            ax.set_title(f"{method} [invalid]", fontsize=10)
         ax.grid(True, alpha=0.25)
 
     plt.tight_layout(rect=[0, 0.01, 1, 0.97])
@@ -565,7 +575,7 @@ def _save_sample_umap_plot(
     sample_cf = _to_channel_first(sample)
     guide_cf = _to_channel_first(native_guide)
 
-    successful_outcomes = [outcome for outcome in outcomes if outcome.get("success")]
+    successful_outcomes = [outcome for outcome in outcomes if outcome.get("validity", 0.0) == 1.0]
     background_flat = background_cf.reshape(background_cf.shape[0], -1)
     n_neighbors = min(15, max(2, background_flat.shape[0] - 1))
     reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, min_dist=0.15, metric="euclidean", random_state=42)
@@ -624,10 +634,10 @@ def _summarize_results(methods: Sequence[str], results: Dict[str, List[Dict[str,
     summary_rows: List[Dict[str, float | str]] = []
     for method in methods:
         method_rows = results[method]
-        successes = [row for row in method_rows if row.get("success")]
+        successes = [row for row in method_rows if row.get("validity", 0.0) == 1.0]
         keane_rows = [row for row in method_rows if "keane_validity" in row]
         total = len(method_rows)
-        success_rate = 100.0 * len(successes) / max(1, total)
+        validity_rate = 100.0 * float(np.mean([row.get("validity", 0.0) for row in method_rows])) if method_rows else 0.0
         avg_conf = float(np.mean([row["confidence"] for row in successes])) if successes else 0.0
         avg_l2 = float(np.mean([row["l2_distance"] for row in successes])) if successes else 0.0
         avg_pct_changed = float(np.mean([row["pct_changed"] for row in successes])) if successes else 0.0
@@ -635,6 +645,9 @@ def _summarize_results(methods: Sequence[str], results: Dict[str, List[Dict[str,
         avg_temp_consistency = float(np.mean([row["temporal_consistency"] for row in successes])) if successes else 0.0
         avg_range_validity = float(np.mean([row["range_validity"] for row in successes])) if successes else 0.0
         avg_autocorr = float(np.mean([row["autocorr_preservation"] for row in successes])) if successes else 0.0
+        avg_dtw = float(np.mean([row["dtw_distance"] for row in successes])) if successes else 0.0
+        avg_validity = float(np.mean([row["validity"] for row in successes])) if successes else 0.0
+        avg_sparsity = float(np.mean([row["sparsity"] for row in successes])) if successes else 0.0
         avg_keane_validity = float(np.mean([row["keane_validity"] for row in keane_rows])) if keane_rows else 0.0
         avg_keane_proximity = float(np.mean([row["keane_proximity"] for row in keane_rows])) if keane_rows else 0.0
         avg_keane_compactness = float(np.mean([row["keane_compactness"] for row in keane_rows])) if keane_rows else 0.0
@@ -642,7 +655,7 @@ def _summarize_results(methods: Sequence[str], results: Dict[str, List[Dict[str,
         summary_rows.append(
             {
                 "method": method,
-                "success_rate": success_rate,
+                "validity_rate": validity_rate,
                 "avg_confidence": avg_conf,
                 "avg_l2_distance": avg_l2,
                 "avg_pct_changed": avg_pct_changed,
@@ -650,6 +663,9 @@ def _summarize_results(methods: Sequence[str], results: Dict[str, List[Dict[str,
                 "avg_temporal_consistency": avg_temp_consistency,
                 "avg_range_validity": avg_range_validity,
                 "avg_autocorr_preservation": avg_autocorr,
+                "avg_dtw_distance": avg_dtw,
+                "avg_validity": avg_validity,
+                "avg_sparsity": avg_sparsity,
                 "avg_keane_validity": avg_keane_validity,
                 "avg_keane_proximity": avg_keane_proximity,
                 "avg_keane_compactness": avg_keane_compactness,
@@ -665,14 +681,14 @@ def _print_summary(title: str, methods: Sequence[str], summary_rows: Sequence[Di
     print(title)
     print("=" * 80)
     print(
-        f"{'Method':<{method_col_width}} {'Success':<10} {'Confidence':<12} {'L2 Distance':<12} "
+        f"{'Method':<{method_col_width}} {'Validity':<10} {'Confidence':<12} {'L2 Distance':<12} "
         f"{'%Changed':<10} {'Norm Dist':<10} {'Temp Cons':<10} {'Range Val':<10} {'AutoCorr':<10} "
         f"{'K.Valid':<8} {'K.Prox':<9} {'K.Comp':<9} {'Time (s)':<10}"
     )
     print("-" * 80)
     for row in summary_rows:
         print(
-            f"{row['method']:<{method_col_width}} {row['success_rate']:<10.1f}% {row['avg_confidence']:<12.4f} "
+            f"{row['method']:<{method_col_width}} {row['validity_rate']:<10.1f}% {row['avg_confidence']:<12.4f} "
             f"{row['avg_l2_distance']:<12.2f} {row['avg_pct_changed']:<10.2f} {row['avg_normalized_distance']:<10.4f} "
             f"{row['avg_temporal_consistency']:<10.4f} {row['avg_range_validity']:<10.4f} {row['avg_autocorr_preservation']:<10.4f} "
             f"{row['avg_keane_validity']:<8.4f} {row['avg_keane_proximity']:<9.4f} {row['avg_keane_compactness']:<9.4f} {row['avg_time']:<10.4f}"
@@ -685,7 +701,7 @@ def _save_summary_csv(csv_path: str, summary_rows: Sequence[Dict[str, float | st
             csv_file,
             fieldnames=[
                 "method",
-                "success_rate",
+                "validity_rate",
                 "avg_confidence",
                 "avg_l2_distance",
                 "avg_pct_changed",
@@ -693,6 +709,9 @@ def _save_summary_csv(csv_path: str, summary_rows: Sequence[Dict[str, float | st
                 "avg_temporal_consistency",
                 "avg_range_validity",
                 "avg_autocorr_preservation",
+                "avg_dtw_distance",
+                "avg_validity",
+                "avg_sparsity",
                 "avg_keane_validity",
                 "avg_keane_proximity",
                 "avg_keane_compactness",
@@ -707,7 +726,7 @@ def _save_summary_csv(csv_path: str, summary_rows: Sequence[Dict[str, float | st
 
 def _save_summary_plot(plot_path: str, summary_rows: Sequence[Dict[str, float | str]], title: str):
     names = [row["method"] for row in summary_rows]
-    success_rates = [row["success_rate"] for row in summary_rows]
+    validity_rates = [row["validity_rate"] for row in summary_rows]
     confidences = [row["avg_confidence"] for row in summary_rows]
     distances = [row["avg_l2_distance"] for row in summary_rows]
     pct_changed = [row["avg_pct_changed"] for row in summary_rows]
@@ -716,22 +735,30 @@ def _save_summary_plot(plot_path: str, summary_rows: Sequence[Dict[str, float | 
     keane_validity = [row["avg_keane_validity"] for row in summary_rows]
     keane_proximity = [row["avg_keane_proximity"] for row in summary_rows]
     keane_compactness = [row["avg_keane_compactness"] for row in summary_rows]
+    dtw_distances = [row["avg_dtw_distance"] for row in summary_rows]
+    validities = [row["avg_validity"] for row in summary_rows]
+    sparsities = [row["avg_sparsity"] for row in summary_rows]
 
-    fig_height = max(16, 0.85 * len(names) + 12)
-    fig, axes = plt.subplots(3, 3, figsize=(18, fig_height))
+    fig_height = max(20, 0.85 * len(names) + 16)
+    fig, axes = plt.subplots(4, 3, figsize=(18, fig_height))
     fig.suptitle(title, fontsize=14, fontweight="bold")
 
-    axes[0, 0].barh(names, success_rates, color="steelblue")
-    axes[0, 0].set_title("Success Rate (%)")
+    axes[0, 0].barh(names, validity_rates, color="steelblue")
+    axes[0, 0].set_title("Validity Rate (%)")
     axes[0, 0].set_xlim([0, 105])
-    for idx, value in enumerate(success_rates):
+    for idx, value in enumerate(validity_rates):
         axes[0, 0].text(value + 1, idx, f"{value:.1f}%", va="center")
-    _mark_best_barh(axes[0, 0], success_rates, higher_is_better=True)
+    _mark_best_barh(axes[0, 0], validity_rates, higher_is_better=True)
 
     axes[0, 1].barh(names, confidences, color="seagreen")
     axes[0, 1].set_title("Average Confidence")
     axes[0, 1].set_xlim(left=0)
     _mark_best_barh(axes[0, 1], confidences, higher_is_better=True)
+
+    axes[0, 2].barh(names, keane_validity, color="forestgreen")
+    axes[0, 2].set_title("Keane Validity")
+    axes[0, 2].set_xlim(left=0, right=1.05)
+    _mark_best_barh(axes[0, 2], keane_validity, higher_is_better=True)
 
     axes[1, 0].barh(names, distances, color="darkorange")
     axes[1, 0].set_title("Average L2 Distance")
@@ -743,6 +770,11 @@ def _save_summary_plot(plot_path: str, summary_rows: Sequence[Dict[str, float | 
     axes[1, 1].set_xlim(left=0)
     _mark_best_barh(axes[1, 1], pct_changed, higher_is_better=False)
 
+    axes[1, 2].barh(names, keane_proximity, color="sienna")
+    axes[1, 2].set_title("Keane Proximity")
+    axes[1, 2].set_xlim(left=0)
+    _mark_best_barh(axes[1, 2], keane_proximity, higher_is_better=False)
+
     axes[2, 0].barh(names, norm_distance, color="darkviolet")
     axes[2, 0].set_title("Normalized Distance")
     axes[2, 0].set_xlim(left=0)
@@ -753,20 +785,25 @@ def _save_summary_plot(plot_path: str, summary_rows: Sequence[Dict[str, float | 
     axes[2, 1].set_xlim(left=0, right=1.05)
     _mark_best_barh(axes[2, 1], range_validity, higher_is_better=True)
 
-    axes[0, 2].barh(names, keane_validity, color="forestgreen")
-    axes[0, 2].set_title("Keane Validity")
-    axes[0, 2].set_xlim(left=0, right=1.05)
-    _mark_best_barh(axes[0, 2], keane_validity, higher_is_better=True)
-
-    axes[1, 2].barh(names, keane_proximity, color="sienna")
-    axes[1, 2].set_title("Keane Proximity")
-    axes[1, 2].set_xlim(left=0)
-    _mark_best_barh(axes[1, 2], keane_proximity, higher_is_better=False)
-
     axes[2, 2].barh(names, keane_compactness, color="seagreen")
     axes[2, 2].set_title("Keane Compactness")
     axes[2, 2].set_xlim(left=0, right=1.05)
     _mark_best_barh(axes[2, 2], keane_compactness, higher_is_better=True)
+
+    axes[3, 0].barh(names, dtw_distances, color="royalblue")
+    axes[3, 0].set_title("Average DTW Distance")
+    axes[3, 0].set_xlim(left=0)
+    _mark_best_barh(axes[3, 0], dtw_distances, higher_is_better=False)
+
+    axes[3, 1].barh(names, validities, color="crimson")
+    axes[3, 1].set_title("Validity (prediction_change)")
+    axes[3, 1].set_xlim(left=0, right=1.05)
+    _mark_best_barh(axes[3, 1], validities, higher_is_better=True)
+
+    axes[3, 2].barh(names, sparsities, color="goldenrod")
+    axes[3, 2].set_title("Sparsity (higher better)")
+    axes[3, 2].set_xlim(left=0, right=1.05)
+    _mark_best_barh(axes[3, 2], sparsities, higher_is_better=True)
 
     for ax in axes.flat:
         ax.grid(True, axis="x", alpha=0.25)
@@ -889,8 +926,9 @@ def main():
                 outcome = _evaluate_method(method, configs, sample, dataset_test, reference_data, model, target_class, device)
                 suite_results[suite_name][method].append(outcome)
                 sample_outcomes.append(outcome)
-                status = "success" if outcome.get("success") else "failed"
-                if outcome.get("success"):
+                valid = outcome.get("validity", 0.0) == 1.0
+                status = "valid" if valid else "invalid"
+                if valid:
                     print(
                         f"    {method:<{method_col_width}} {status:<7} pred={outcome['pred_class']} conf={outcome['confidence']:.4f} "
                         f"l2={outcome['l2_distance']:.2f} pct={outcome['pct_changed']:.2f}% time={outcome['elapsed']:.3f}s"

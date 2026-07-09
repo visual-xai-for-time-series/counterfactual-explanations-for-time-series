@@ -3,9 +3,9 @@
 #
 # Sequentially executes:
 #   1. faultdetectiona/ablation_faultdetectiona.py
-#   2. faultdetectiona/compare_imfact_guide_wachter.py
+#   2. faultdetectiona/compare_faultdetectiona.py
 #   3. fruitflies/ablation_fruitflies.py
-#   4. fruitflies/compare_imfact_guide_wachter.py
+#   4. fruitflies/compare_fruitflies.py
 #
 # Usage:
 #   ./run_all_experiments.sh [options]
@@ -180,7 +180,7 @@ fi
 
 if [[ "${TO_RUN[faultdetectiona_compare]}" -eq 1 ]]; then
     run_experiment faultdetectiona_compare \
-        "$PYTHON" "$SCRIPT_DIR/faultdetectiona/compare_imfact_guide_wachter.py" \
+        "$PYTHON" "$SCRIPT_DIR/faultdetectiona/compare_faultdetectiona.py" \
         --n-samples "$N_SAMPLES" \
         --out-dir "$OUT_DIR/faultdetectiona_compare" \
         --seed "$SEED"
@@ -204,7 +204,7 @@ fi
 
 if [[ "${TO_RUN[fruitflies_compare]}" -eq 1 ]]; then
     run_experiment fruitflies_compare \
-        "$PYTHON" "$SCRIPT_DIR/fruitflies/compare_imfact_guide_wachter.py" \
+        "$PYTHON" "$SCRIPT_DIR/fruitflies/compare_fruitflies.py" \
         --n-samples "$FRUITFLIES_N_SAMPLES" \
         --out-dir "$OUT_DIR/fruitflies_compare" \
         --seed "$SEED"
