@@ -8,6 +8,7 @@ generation algorithms across multiple evaluation dimensions.
 from .validity import *
 from .proximity import *
 from .sparsity import *
+from .evaluate import evaluate_counterfactual
 from .realism import *
 from .diversity import *
 from .stability import *
@@ -74,5 +75,8 @@ __all__ = [
     # Utility classes and functions
     'CounterfactualEvaluator',
     'create_metric_suite',
-    'benchmark_algorithms'
+    'benchmark_algorithms',
+
+    # Single-function evaluation
+    'evaluate_counterfactual',
 ]

@@ -370,7 +370,7 @@ _SUBSET_SIZE = min(50, len(dataset_test))
 print('Start with native guide')
 start_time = time.time()
 try:
-    cf_ng, prediction_ng = ng.native_guide_uni_cf(sample, dataset_test_ds, model)
+    cf_ng, prediction_ng = ng.native_guide_uni_cf(sample, model, dataset=dataset_test_ds)
     timing_results['Native Guide'] = time.time() - start_time
     print(f'Native Guide completed in {timing_results["Native Guide"]:.3f} seconds')
 except Exception as e:
@@ -909,7 +909,8 @@ print('Start with IMFACT-CF')
 start_time = time.time()
 try:
     cf_imfact_cf, prediction_imfact_cf = imfact_cf_mod.imfact_cf(
-        sample, dataset_test_ds, model,
+        sample, model,
+        dataset=dataset_test_ds,
         method='distance',
         step=0.05,
         max_iter=200,

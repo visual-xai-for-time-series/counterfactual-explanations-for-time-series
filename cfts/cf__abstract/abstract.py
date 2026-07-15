@@ -179,6 +179,65 @@ def ensure_ncl(
     return sample_cl, ts, ori
 
 
+def batched_predict(
+    model: torch.nn.Module,
+    ts: np.ndarray,
+    device: torch.device,
+    batch_size: int = 64,
+) -> np.ndarray:
+    """Run *model* on an ``(N, C, L)`` array in mini-batches.
+
+    Avoids OOM when ``N`` is large (e.g. 17 k FruitFlies series) by never
+    materialising more than ``batch_size`` samples as a GPU/CPU tensor at once.
+
+    Returns
+    -------
+    np.ndarray, shape (N, num_classes)
+    """
+    results = []
+    for start in range(0, len(ts), batch_size):
+        batch = ts[start : start + batch_size]
+        with torch.no_grad():
+            out = model(numpy_to_torch(batch, device))
+        results.append(detach_to_numpy(out))
+    return np.concatenate(results, axis=0)
+
+
+def subsample_dataset(dataset, max_samples: int) -> list:
+    """Return a stratified subsample of *dataset* capped at *max_samples* items.
+
+    Labels are read from ``item[1]`` of each ``(x, y)`` pair and may be either
+    a one-hot array or a scalar class index.  The subsample is balanced across
+    all classes found in the dataset.
+
+    Parameters
+    ----------
+    dataset:
+        Sequence of ``(x, y)`` pairs.
+    max_samples:
+        Maximum number of items to return.  The actual count may be slightly
+        less when the dataset is small or class counts are uneven.
+    """
+    if len(dataset) <= max_samples:
+        return list(dataset) if not isinstance(dataset, list) else dataset
+
+    def _label(y) -> int:
+        arr = np.asarray(y)
+        return int(np.argmax(arr)) if arr.ndim > 0 and arr.size > 1 else int(arr)
+
+    labels = [_label(dataset[i][1]) for i in range(len(dataset))]
+    classes = sorted(set(labels))
+    per_class = max(1, max_samples // len(classes))
+    buckets: dict[int, list[int]] = {c: [] for c in classes}
+    for i, lbl in enumerate(labels):
+        buckets[lbl].append(i)
+    selected: list[int] = []
+    for c in classes:
+        selected.extend(buckets[c][:per_class])
+    selected = sorted(selected[:max_samples])
+    return [dataset[i] for i in selected]
+
+
 ####
 # abstract_cf – Reference / template implementation (not a research method)
 #

@@ -20,6 +20,7 @@ Available Algorithms:
 - GLACIER counterfactuals (cf_glacier)
 - LASTS counterfactuals (cf_lasts)
 - Latent-CF counterfactuals (cf_latent_cf)
+- MASCOTS counterfactuals (cf_mascots)
 - MG-CF counterfactuals (cf_mg_cf)
 - MultiSpace counterfactuals (cf_multispace)
 - Native-Guide counterfactuals (cf_native_guide)
@@ -57,6 +58,7 @@ from . import (
     cf_glacier,
     cf_lasts,
     cf_latent_cf,
+    cf_mascots,
     cf_mg_cf,
     cf_multispace,
     cf_native_guide,
@@ -92,6 +94,7 @@ __all__ = [
     "cf_glacier",
     "cf_lasts",
     "cf_latent_cf",
+    "cf_mascots",
     "cf_mg_cf",
     "cf_multispace",
     "cf_native_guide",
@@ -128,6 +131,7 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_glacier",
     "cf_lasts",
     "cf_latent_cf",
+    "cf_mascots",
     "cf_mg_cf",
     "cf_multispace",
     "cf_native_guide",

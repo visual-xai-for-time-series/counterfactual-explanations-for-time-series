@@ -147,7 +147,7 @@ def create_algorithm_wrappers(dataset_test, model):
     """Create wrapper functions for counterfactual algorithms with consistent interface."""
     
     def native_guide_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = ng.native_guide_uni_cf(original_ts, dataset_test, model)
+        cf, _ = ng.native_guide_uni_cf(original_ts, model, dataset=dataset_test)
         return cf if cf is not None else original_ts
     
     def comte_wrapper(original_ts, target_class=None, **kwargs):

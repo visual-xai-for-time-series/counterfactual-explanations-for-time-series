@@ -297,8 +297,7 @@ progress = tqdm(total=len(methods), desc='Generating Counterfactuals', unit='met
 
 print('Start with native guide')
 start_time = time.time()
-# Native Guide doesn't support explicit target class, it finds the nearest different class
-cf_ng, prediction_ng = ng.native_guide_uni_cf(sample, dataset_test, model)
+cf_ng, prediction_ng = ng.native_guide_uni_cf(sample, model, dataset=dataset_test)
 timing_results['Native Guide'] = time.time() - start_time
 print(f'Native Guide completed in {timing_results["Native Guide"]:.3f} seconds')
 progress.update(1)
