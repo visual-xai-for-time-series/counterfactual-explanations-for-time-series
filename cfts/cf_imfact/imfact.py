@@ -17,6 +17,7 @@ from cfts.cf__abstract.abstract import (
     ensure_cl,
     ensure_ncl,
     revert_orientation,
+    subsample_dataset,
 )
 
 
@@ -171,6 +172,18 @@ def _sift_imfs(data: np.ndarray, max_imfs: int = 10, max_sift: int = 1000,
     return np.array(imfs, dtype=np.float32)
 
 
+def _decompose(channel_data: np.ndarray, decomposer: str, max_imfs: int) -> np.ndarray:
+    """Decompose a 1-D channel into IMFs, returning shape ``(n_imfs, L)``."""
+    if decomposer == "sift_imfs":
+        return _sift_imfs(channel_data, max_imfs=max_imfs)
+    elif decomposer == "emd":
+        import emd as _emd
+        imfs = _emd.sift.sift(channel_data.astype(np.float64), max_imfs=max_imfs)
+        return imfs.T.astype(np.float32)  # (samples, n_imfs) → (n_imfs, samples)
+    else:
+        raise ValueError(f"decomposer must be 'sift_imfs' or 'emd', got '{decomposer}'")
+
+
 def _psd(data: np.ndarray) -> np.ndarray:
     """Normalised Welch PSD suitable for Jensen-Shannon distance."""
     _, pxx = signal.welch(data.astype(np.float64), scaling='spectrum')
@@ -209,79 +222,25 @@ def _select_native_guide(
     ts: np.ndarray,
     labels: np.ndarray,
     label_orig: int,
-    scores_orig: np.ndarray,
     model: torch.nn.Module,
     device: torch.device,
-    guide_class: int | None,
+    target_class: int | None,
 ) -> tuple[np.ndarray, int, float, dict]:
-    """Select a native guide with a hybrid NUN score.
+    """Select a single native guide with a hybrid NUN score.
 
-    The score blends:
-    - PSD Jensen-Shannon distance (spectral similarity)
-    - L2 distance in raw signal space (shape proximity)
-    - Model margin towards a target flip class (flip-likelihood)
+    Thin wrapper around :func:`_select_native_guides` with ``n_guides=1``.
     """
-    if guide_class is None:
-        mask = labels != label_orig
-    else:
-        guide_class = int(guide_class)
-        if guide_class == label_orig:
-            raise ValueError("guide_class must differ from the query sample class")
-        mask = labels == guide_class
-
-    if not np.any(mask):
-        if guide_class is None:
-            raise ValueError("No unlike-class candidate found for native guide selection")
-        raise ValueError(f"No native guide found for guide_class={guide_class}")
-
-    cand_ts = ts[mask]
-    cand_labels = labels[mask]
-    n_cands = cand_ts.shape[0]
-    C, L = sample_cl.shape
-
-    # Mean PSD distance across channels.
-    src_psd_per_c = [_psd(sample_cl[c]) for c in range(C)]
-    js_dists = np.zeros(n_cands, dtype=np.float64)
-    for i in range(n_cands):
-        js_dists[i] = float(np.mean([
-            jensenshannon(src_psd_per_c[c], _psd(cand_ts[i, c])) for c in range(C)
-        ]))
-
-    # Raw-space proximity (normalised by signal length).
-    denom = np.sqrt(float(C * L)) + 1e-12
-    l2_dists = np.linalg.norm(cand_ts.reshape(n_cands, -1) - sample_cl.reshape(1, -1), axis=1) / denom
-
-    # Model-side flip likelihood for candidates.
-    with torch.no_grad():
-        cand_scores = detach_to_numpy(model(numpy_to_torch(cand_ts, device)))
-
-    n_classes = int(cand_scores.shape[1])
-    if guide_class is not None:
-        target_class = int(guide_class)
-        margin = cand_scores[:, target_class] - cand_scores[:, label_orig]
-        pred_penalty = (np.argmax(cand_scores, axis=1) != target_class).astype(np.float64)
-    else:
-        class_mask = np.ones(n_classes, dtype=bool)
-        class_mask[label_orig] = False
-        best_other = np.max(cand_scores[:, class_mask], axis=1)
-        margin = best_other - cand_scores[:, label_orig]
-        pred_penalty = np.zeros_like(margin)
-
-    js_norm = _minmax_norm(js_dists)
-    l2_norm = _minmax_norm(l2_dists)
-    margin_cost = 1.0 - _minmax_norm(margin)
-
-    # Weighting tuned to keep NUN close while preferring flip-ready guides.
-    score = 0.55 * js_norm + 0.25 * l2_norm + 0.20 * margin_cost + 0.10 * pred_penalty
-
-    best_idx = int(np.argmin(score))
-    diagnostics = {
-        "hybrid_score": float(score[best_idx]),
-        "js_dist": float(js_dists[best_idx]),
-        "l2_dist": float(l2_dists[best_idx]),
-        "margin": float(margin[best_idx]),
-    }
-    return cand_ts[best_idx], int(cand_labels[best_idx]), float(js_dists[best_idx]), diagnostics
+    guides, guide_labels, guide_js, guide_diags = _select_native_guides(
+        sample_cl=sample_cl,
+        ts=ts,
+        labels=labels,
+        label_orig=label_orig,
+        model=model,
+        device=device,
+        target_class=target_class,
+        n_guides=1,
+    )
+    return guides[0], int(guide_labels[0]), float(guide_js[0]), guide_diags[0]
 
 
 def _select_native_guides(
@@ -289,25 +248,24 @@ def _select_native_guides(
     ts: np.ndarray,
     labels: np.ndarray,
     label_orig: int,
-    scores_orig: np.ndarray,
     model: torch.nn.Module,
     device: torch.device,
-    guide_class: int | None,
+    target_class: int | None,
     n_guides: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
     """Select top-k native guides ranked by the same hybrid NUN score."""
-    if guide_class is None:
+    if target_class is None:
         mask = labels != label_orig
     else:
-        guide_class = int(guide_class)
-        if guide_class == label_orig:
-            raise ValueError("guide_class must differ from the query sample class")
-        mask = labels == guide_class
+        target_class = int(target_class)
+        if target_class == label_orig:
+            raise ValueError("target_class must differ from the query sample class")
+        mask = labels == target_class
 
     if not np.any(mask):
-        if guide_class is None:
+        if target_class is None:
             raise ValueError("No unlike-class candidate found for native guide selection")
-        raise ValueError(f"No native guide found for guide_class={guide_class}")
+        raise ValueError(f"No native guide found for target_class={target_class}")
 
     cand_ts = ts[mask]
     cand_labels = labels[mask]
@@ -328,10 +286,10 @@ def _select_native_guides(
         cand_scores = detach_to_numpy(model(numpy_to_torch(cand_ts, device)))
 
     n_classes = int(cand_scores.shape[1])
-    if guide_class is not None:
-        target_class = int(guide_class)
-        margin = cand_scores[:, target_class] - cand_scores[:, label_orig]
-        pred_penalty = (np.argmax(cand_scores, axis=1) != target_class).astype(np.float64)
+    if target_class is not None:
+        flip_class = int(target_class)
+        margin = cand_scores[:, flip_class] - cand_scores[:, label_orig]
+        pred_penalty = (np.argmax(cand_scores, axis=1) != flip_class).astype(np.float64)
     else:
         class_mask = np.ones(n_classes, dtype=bool)
         class_mask[label_orig] = False
@@ -375,7 +333,7 @@ def _select_native_guides(
 # Strategy:
 #   1. Find a native guide in the dataset: the nearest sample (by Jensen-Shannon
 #      distance on Welch PSD) that belongs to a different class, or to a
-#      specific guide_class when one is provided.
+#      specific target_class when one is provided.
 #   2. Decompose source and native guide into Intrinsic Mode Functions (IMFs)
 #      using basic EMD sifting.
 #   3. Initialise per-IMF interpolation weights (w_source=1, w_target=0).
@@ -387,24 +345,12 @@ def _select_native_guides(
 #      unlocks one more IMF every few iterations.
 #   5. Reconstruct the signal and query the model; stop on a class flip.
 ####
-def _decompose(channel_data: np.ndarray, decomposer: str, max_imfs: int) -> np.ndarray:
-    """Decompose a 1-D channel into IMFs, returning shape ``(n_imfs, L)``."""
-    if decomposer == "sift_imfs":
-        return _sift_imfs(channel_data, max_imfs=max_imfs)
-    elif decomposer == "emd":
-        import emd as _emd
-        imfs = _emd.sift.sift(channel_data.astype(np.float64), max_imfs=max_imfs)
-        return imfs.T.astype(np.float32)  # (samples, n_imfs) → (n_imfs, samples)
-    else:
-        raise ValueError(f"decomposer must be 'sift_imfs' or 'emd', got '{decomposer}'")
-
-
 def imfact_cf(
-    sample: np.ndarray,
-    dataset,
+    sample: np.ndarray | list,
     model: torch.nn.Module,
+    target_class: int | None = None,
+    dataset: list | np.ndarray = None,
     method: str = "distance",
-    guide_class: int | None = None,
     step: float = 0.05,
     max_iter: int = 200,
     max_imfs: int = 10,
@@ -412,18 +358,31 @@ def imfact_cf(
     n_nuns: int = 1,
     nun_switch: str = "cycle",
     decomposer: str = "sift_imfs",
+    max_samples: int | None = None,
     verbose: bool = False,
+    *args,
+    **kwargs,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """IMFACT-based counterfactual explanation for time series classification.
+
+    Follows the same signature pattern as every other CF method in this
+    repository (native_guide_uni_cf, glacier_cf, cem_cf, …) so it plugs
+    straight into the existing evaluation and example scripts.
 
     Parameters
     ----------
     sample:
         Query time series; 1-D ``(L,)``, ``(C, L)`` or ``(L, C)``.
-    dataset:
-        Training set as a sequence of ``(x, y)`` pairs.
     model:
         PyTorch classifier with signature ``forward(B, C, L) -> (B, n_classes)``.
+    target_class:
+        Optional class label to restrict the native guide search to, and the
+        stopping criterion: iteration stops as soon as the model predicts
+        ``target_class``.  When ``None``, the guide is taken from any class
+        different from the query's predicted class, and iteration stops on
+        any class flip.
+    dataset:
+        Training set as a sequence of ``(x, y)`` pairs.
     method:
         IMF weighting strategy: ``"distance"`` (JSD between interpolated and
         target IMF PSDs), ``"fingerprint"`` (legacy Welch-fingerprint IMF
@@ -432,10 +391,6 @@ def imfact_cf(
         distant IMFs between query and native guide in PSD space), ``"maxmin"``
         (prioritise IMFs with larger amplitude range, i.e. max-min), or
         ``"coarse_to_fine"`` (iteratively unlock IMFs from coarse to fine).
-    guide_class:
-        Optional class label to restrict the native guide search to.  When
-        ``None``, the guide is taken from any class different from the query's
-        predicted class.
     step:
         Base interpolation step per iteration.
     max_iter:
@@ -478,6 +433,8 @@ def imfact_cf(
     device = next(model.parameters()).device
 
     # --- normalise input to (C, L) and dataset to (N, C, L) ----------------
+    if max_samples is not None:
+        dataset = subsample_dataset(dataset, max_samples)
     sample_cl, ts, ori = ensure_ncl(sample, dataset)
     C, L = sample_cl.shape
     N = ts.shape[0]
@@ -500,10 +457,9 @@ def imfact_cf(
             ts=ts,
             labels=labels,
             label_orig=label_orig,
-            scores_orig=scores_orig,
             model=model,
             device=device,
-            guide_class=guide_class,
+            target_class=target_class,
             n_guides=n_nuns,
         )
     except ValueError:
@@ -612,10 +568,10 @@ def imfact_cf(
     def _variance_step_weights() -> list[np.ndarray]:
         """Normalised per-IMF class variance difference (source vs target class)."""
         src_series = [ts[i, 0] for i in range(N) if labels[i] == label_orig]
-        if guide_class is None:
+        if target_class is None:
             target_mask = labels != label_orig
         else:
-            target_mask = labels == int(guide_class)
+            target_mask = labels == int(target_class)
         tgt_series = [ts[i, 0] for i in range(N) if target_mask[i]]
         step_w = []
         for c in range(C):
@@ -730,7 +686,7 @@ def imfact_cf(
     cf = sample_cl.copy()
     scores_cf = scores_orig.copy()
 
-    target_stop_class = None if guide_class is None else int(guide_class)
+    target_stop_class = None if target_class is None else int(target_class)
 
     for i in range(max_iter):
         _advance_weights(i)
@@ -758,3 +714,344 @@ def imfact_cf(
                 break
 
     return revert_orientation(cf, ori), scores_cf
+
+
+####
+# trace_imfact_variant_path – per-iteration tracing wrapper around imfact_cf
+#
+# Records the full interpolation history (signal, prediction, confidence,
+# target probability, L2 distance to the native guide) at every iteration
+# so that callers can inspect or visualise how the counterfactual evolves.
+# The algorithm is identical to imfact_cf with n_nuns=1; only the return
+# value changes from a (cf, scores) tuple to a rich history dict.
+####
+def trace_imfact_variant_path(
+    sample: np.ndarray | list,
+    model: torch.nn.Module,
+    target_class: int | None = None,
+    dataset: list | np.ndarray = None,
+    method: str = "distance",
+    step: float = 0.05,
+    max_iter: int = 25,
+    max_imfs: int = 10,
+    coarse_stage_iters: int = 10,
+    decomposer: str = "sift_imfs",
+    max_samples: int | None = None,
+    verbose: bool = False,
+    *args,
+    **kwargs,
+) -> dict:
+    """Trace the per-iteration path of a single IMFACT variant.
+
+    Runs the same interpolation loop as :func:`imfact_cf` (with ``n_nuns=1``)
+    and records a snapshot at every iteration so the counterfactual trajectory
+    can be inspected, plotted, or projected into a latent space.
+
+    Follows the same signature pattern as every other CF method in this
+    repository so it plugs straight into existing evaluation scripts.
+
+    Parameters
+    ----------
+    sample:
+        Query time series; 1-D ``(L,)``, ``(C, L)`` or ``(L, C)``.
+    model:
+        PyTorch classifier with signature ``forward(B, C, L) -> (B, n_classes)``.
+    target_class:
+        Class index whose probability is tracked in the history ``target_prob``
+        field.  Also restricts the native guide search to this class and acts
+        as the stopping criterion: iteration stops as soon as the model
+        predicts ``target_class``.  When ``None``, any unlike-class candidate
+        is eligible as a guide, iteration stops on any class flip, and
+        ``target_prob`` records the max non-original class score.
+    dataset:
+        Training set as a sequence of ``(x, y)`` pairs used to find the NUN.
+    method:
+        IMF weighting strategy — same options as :func:`imfact_cf`:
+        ``"distance"``, ``"fingerprint"``, ``"variance"``, ``"extremes"``,
+        ``"maxmin"``, or ``"coarse_to_fine"``.
+    step:
+        Base interpolation step per iteration.
+    max_iter:
+        Maximum number of iterations before returning the best candidate.
+    max_imfs:
+        Maximum number of IMFs to extract per channel.
+    coarse_stage_iters:
+        Iterations per coarse-to-fine stage (only used for ``"coarse_to_fine"``).
+    decomposer:
+        ``"sift_imfs"`` (built-in) or ``"emd"`` (requires *emd-signal* package).
+    verbose:
+        Print per-iteration diagnostics when ``True``.
+
+    Returns
+    -------
+    dict with keys:
+
+    ``method`` : str
+        The weighting strategy used.
+    ``history`` : list[dict]
+        One entry per iteration (plus iteration ``-1`` for the original sample).
+        Each entry has: ``iteration``, ``signal`` (C, L), ``pred_class``,
+        ``confidence``, ``target_prob``, ``l2_to_guide``.
+    ``original_scores`` : np.ndarray, shape (n_classes,)
+    ``final_cf`` : np.ndarray, shape (C, L)
+        Counterfactual in (C, L) layout (use :func:`revert_orientation` if the
+        original orientation is needed).
+    ``final_scores`` : np.ndarray, shape (n_classes,)
+    ``native_guide`` : np.ndarray, shape (C, L)
+    ``native_guide_label`` : int
+    ``original_class`` : int
+    ``target_class`` : int | None
+    """
+    if method not in ("distance", "fingerprint", "variance", "extremes", "maxmin", "coarse_to_fine"):
+        raise ValueError(
+            "method must be 'distance', 'fingerprint', 'variance', 'extremes', 'maxmin', or 'coarse_to_fine'"
+        )
+    if decomposer not in ("sift_imfs", "emd"):
+        raise ValueError("decomposer must be 'sift_imfs' or 'emd'")
+
+    device = next(model.parameters()).device
+
+    # --- 1. Normalise input shapes ---
+    if max_samples is not None:
+        dataset = subsample_dataset(dataset, max_samples)
+    sample_cl, ts, ori = ensure_ncl(sample, dataset)
+    C, L = sample_cl.shape
+    N = ts.shape[0]
+    raw_labels = np.array([item[1] for item in dataset])
+    labels = np.argmax(raw_labels, axis=1).astype(int) if raw_labels.ndim > 1 else raw_labels.astype(int)
+
+    def _predict(arr_ncl: np.ndarray) -> np.ndarray:
+        with torch.no_grad():
+            return detach_to_numpy(model(numpy_to_torch(arr_ncl, device)))
+
+    # --- 2. Original prediction ---
+    scores_orig = _predict(sample_cl.reshape(1, C, L)).reshape(-1)
+    label_orig = int(np.argmax(scores_orig))
+
+    # --- 3. Select a single native guide (NUN) with the hybrid score ---
+    try:
+        native_guide, ng_label, _, ng_diag = _select_native_guide(
+            sample_cl=sample_cl,
+            ts=ts,
+            labels=labels,
+            label_orig=label_orig,
+            model=model,
+            device=device,
+            target_class=target_class,
+        )
+    except ValueError:
+        # No candidate found — return a trivial history with the original sample.
+        trivial_entry = {
+            "iteration": -1,
+            "signal": sample_cl.copy(),
+            "pred_class": label_orig,
+            "confidence": float(np.max(scores_orig)),
+            "target_prob": float(scores_orig[target_class]) if target_class is not None else float(np.max(scores_orig)),
+            "l2_to_guide": 0.0,
+        }
+        return {
+            "method": method,
+            "history": [trivial_entry],
+            "original_scores": scores_orig,
+            "final_cf": sample_cl.copy(),
+            "final_scores": scores_orig,
+            "native_guide": sample_cl.copy(),
+            "native_guide_label": label_orig,
+            "original_class": label_orig,
+            "target_class": target_class,
+        }
+
+    if verbose:
+        print(
+            f"[trace] guide label={ng_label} JS-dist={ng_diag['js_dist']:.4f} "
+            f"L2-dist={ng_diag['l2_dist']:.4f} hybrid={ng_diag['hybrid_score']:.4f}"
+        )
+
+    # --- 4. IMF decomposition ---
+    src_imfs = [_decompose(sample_cl[c], decomposer, max_imfs) for c in range(C)]
+    ng_imfs = [_decompose(native_guide[c], decomposer, max_imfs) for c in range(C)]
+
+    n_imfs_per_c = [max(len(src_imfs[c]), len(ng_imfs[c])) for c in range(C)]
+    for c in range(C):
+        while len(src_imfs[c]) < n_imfs_per_c[c]:
+            src_imfs[c] = np.vstack([src_imfs[c], np.zeros((1, L), dtype=np.float32)])
+        while len(ng_imfs[c]) < n_imfs_per_c[c]:
+            ng_imfs[c] = np.vstack([ng_imfs[c], np.zeros((1, L), dtype=np.float32)])
+
+    # --- 5. Initialise per-IMF interpolation weights ---
+    weights = [
+        [{"w_source": 1.0, "w_target": 0.0} for _ in range(n_imfs_per_c[c])]
+        for c in range(C)
+    ]
+
+    def _reconstruct() -> np.ndarray:
+        result = np.zeros((C, L), dtype=np.float32)
+        for c in range(C):
+            for k, wk in enumerate(weights[c]):
+                result[c] += wk["w_source"] * src_imfs[c][k] + wk["w_target"] * ng_imfs[c][k] * wk["w_target"]
+        return result
+
+    def _distance_step_weights() -> list[np.ndarray]:
+        step_w = []
+        for c in range(C):
+            d = np.zeros(n_imfs_per_c[c])
+            for k, wk in enumerate(weights[c]):
+                interp = wk["w_source"] * src_imfs[c][k] + wk["w_target"] * ng_imfs[c][k] * wk["w_target"]
+                d[k] = jensenshannon(_psd(interp), _psd(ng_imfs[c][k]))
+            step_w.append(d / (np.max(d) + 1e-12))
+        return step_w
+
+    def _fingerprint_step_weights() -> list[np.ndarray]:
+        step_w = []
+        for c in range(C):
+            d = np.zeros(n_imfs_per_c[c])
+            for k, wk in enumerate(weights[c]):
+                interp = wk["w_source"] * src_imfs[c][k] + wk["w_target"] * ng_imfs[c][k] * wk["w_target"]
+                d[k] = jensenshannon(_fingerprint_histogram(interp), _fingerprint_histogram(ng_imfs[c][k]))
+            step_w.append(d / (np.max(d) + 1e-12))
+        return step_w
+
+    def _variance_step_weights() -> list[np.ndarray]:
+        src_series = [ts[i, 0] for i in range(N) if labels[i] == label_orig]
+        if target_class is None:
+            tgt_series = [ts[i, 0] for i in range(N) if labels[i] != label_orig]
+        else:
+            tgt_series = [ts[i, 0] for i in range(N) if labels[i] == int(target_class)]
+        base = abs(_class_variance(src_series) - _class_variance(tgt_series))
+        step_w = []
+        for c in range(C):
+            w = np.full(n_imfs_per_c[c], base)
+            mx = np.max(w)
+            step_w.append(w / (mx + 1e-12) if mx > 0 else w)
+        return step_w
+
+    def _extreme_step_weights() -> list[np.ndarray]:
+        step_w = []
+        for c in range(C):
+            d = np.zeros(n_imfs_per_c[c])
+            for k, wk in enumerate(weights[c]):
+                interp = wk["w_source"] * src_imfs[c][k] + wk["w_target"] * ng_imfs[c][k] * wk["w_target"]
+                d[k] = jensenshannon(_psd(interp), _psd(ng_imfs[c][k]))
+            if d.size == 0:
+                step_w.append(d)
+                continue
+            w = np.zeros_like(d)
+            max_idx, min_idx = int(np.argmax(d)), int(np.argmin(d))
+            w[max_idx] = 1.0
+            w[min_idx] = float(d[min_idx] / (d[max_idx] + 1e-12))
+            step_w.append(w)
+        return step_w
+
+    def _maxmin_step_weights() -> list[np.ndarray]:
+        step_w = []
+        for c in range(C):
+            amp = np.zeros(n_imfs_per_c[c], dtype=np.float64)
+            for k in range(n_imfs_per_c[c]):
+                amp[k] = 0.5 * (float(np.ptp(src_imfs[c][k])) + float(np.ptp(ng_imfs[c][k])))
+            mx = float(np.max(amp)) if amp.size else 0.0
+            step_w.append((amp / (mx + 1e-12)) if mx > 0.0 else np.zeros_like(amp))
+        return step_w
+
+    def _coarse_to_fine_step_weights(iter_idx: int) -> list[np.ndarray]:
+        if coarse_stage_iters <= 0:
+            raise ValueError("coarse_stage_iters must be > 0 for coarse_to_fine mode")
+        stage = iter_idx // coarse_stage_iters
+        step_w = []
+        for c in range(C):
+            d = np.zeros(n_imfs_per_c[c])
+            active_count = min(n_imfs_per_c[c], 1 + stage)
+            active_start = max(0, n_imfs_per_c[c] - active_count)
+            for k in range(active_start, n_imfs_per_c[c]):
+                wk = weights[c][k]
+                interp = wk["w_source"] * src_imfs[c][k] + wk["w_target"] * ng_imfs[c][k] * wk["w_target"]
+                d[k] = jensenshannon(_psd(interp), _psd(ng_imfs[c][k]))
+            active_slice = d[active_start:]
+            mx = np.max(active_slice) if active_slice.size else 0.0
+            if mx > 0:
+                d[active_start:] = d[active_start:] / (mx + 1e-12)
+            step_w.append(d)
+        return step_w
+
+    precomputed_var_weights = _variance_step_weights() if method == "variance" else None
+
+    def _advance_weights(iter_idx: int):
+        if method == "distance":
+            sw = _distance_step_weights()
+        elif method == "fingerprint":
+            sw = _fingerprint_step_weights()
+        elif method == "variance":
+            sw = precomputed_var_weights
+        elif method == "extremes":
+            sw = _extreme_step_weights()
+        elif method == "maxmin":
+            sw = _maxmin_step_weights()
+        elif method == "coarse_to_fine":
+            sw = _coarse_to_fine_step_weights(iter_idx)
+        else:
+            raise RuntimeError(f"Unhandled method: {method}")
+        for c in range(C):
+            for k, wk in enumerate(weights[c]):
+                delta = step * float(sw[c][k])
+                wk["w_target"] = min(1.0, wk["w_target"] + delta)
+                wk["w_source"] = max(0.0, wk["w_source"] - delta)
+
+    # --- 6. Record initial state, then iterate ---
+    guide_flat = native_guide.reshape(-1)
+
+    def _make_entry(iteration: int, sig: np.ndarray, scores: np.ndarray) -> dict:
+        n_classes = len(scores)
+        if target_class is not None:
+            t_prob = float(scores[target_class])
+        else:
+            non_orig = [scores[c] for c in range(n_classes) if c != label_orig]
+            t_prob = float(max(non_orig)) if non_orig else 0.0
+        return {
+            "iteration": iteration,
+            "signal": sig.copy(),
+            "pred_class": int(np.argmax(scores)),
+            "confidence": float(np.max(scores)),
+            "target_prob": t_prob,
+            "l2_to_guide": float(np.linalg.norm(sig.reshape(-1) - guide_flat)),
+        }
+
+    history = [_make_entry(-1, sample_cl, scores_orig)]
+
+    cf = sample_cl.copy()
+    scores_cf = scores_orig.copy()
+    target_stop = target_class  # None → any flip; int → specific class
+
+    for i in range(max_iter):
+        _advance_weights(i)
+        candidate = _reconstruct()
+        scores_cand = _predict(candidate.reshape(1, C, L)).reshape(-1)
+        label_cand = int(np.argmax(scores_cand))
+
+        history.append(_make_entry(i, candidate, scores_cand))
+        cf = candidate
+        scores_cf = scores_cand
+
+        if verbose:
+            print(
+                f"[trace] iter={i:3d}  method={method}  "
+                f"pred={label_cand}  orig={label_orig}  "
+                f"target_prob={scores_cand[target_class]:.4f}" if target_class is not None
+                else f"[trace] iter={i:3d}  method={method}  pred={label_cand}  orig={label_orig}"
+            )
+
+        stopped = (target_stop is None and label_cand != label_orig) or (
+            target_stop is not None and label_cand == target_stop
+        )
+        if stopped:
+            break
+
+    return {
+        "method": method,
+        "history": history,
+        "original_scores": scores_orig,
+        "final_cf": cf,
+        "final_scores": scores_cf,
+        "native_guide": native_guide,
+        "native_guide_label": ng_label,
+        "original_class": label_orig,
+        "target_class": target_class,
+    }

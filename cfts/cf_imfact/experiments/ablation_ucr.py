@@ -59,16 +59,7 @@ for _p in (REPO_ROOT, EXAMPLES_DIR):
 from examples.base.model import SimpleCNN
 from examples.base.data import TimeSeriesDataset, collate_sparse
 from cfts.cf_imfact.imfact import _psd, imfact_cf
-from cfts.metrics import (
-    autocorrelation_preservation,
-    dtw_distance,
-    evaluate_keane_metrics,
-    feature_range_validity,
-    normalized_distance,
-    percentage_changed_points,
-    prediction_change,
-    temporal_consistency,
-)
+from cfts.metrics import evaluate_counterfactual
 
 
 BASE_METHOD_CONFIGS: Dict[str, Dict[str, object]] = {
@@ -318,9 +309,10 @@ def _evaluate_method(
     method_config = method_configs[method]
     try:
         cf, pred = imfact_cf(
-            sample, dataset, model,
+            sample, model,
+            target_class=target_class,
+            dataset=dataset,
             method=method_config["method"],
-            guide_class=target_class,
             step=0.05, max_iter=200, max_imfs=10,
             n_nuns=method_config.get("n_nuns", 1),
             nun_switch=method_config.get("nun_switch", "cycle"),
@@ -337,41 +329,36 @@ def _evaluate_method(
     pred_class, confidence = _format_prediction(pred)
     success = pred_class == target_class
 
-    sample_flat = np.asarray(sample, dtype=np.float32).reshape(-1)
-    cf_flat = np.asarray(cf, dtype=np.float32).reshape(-1)
-    l2_dist = float(np.linalg.norm(cf_flat - sample_flat))
-    pct_changed = float(100.0 * percentage_changed_points(sample, cf))
-    norm_dist = float(normalized_distance(sample_flat, cf_flat))
-    temp_cons = float(temporal_consistency(cf))
-    range_val = float(feature_range_validity(cf, reference_data))
-    autocorr = float(autocorrelation_preservation(sample, cf))
-
     def _model_fn(x: np.ndarray) -> np.ndarray:
         return _predict(model, np.asarray(x, dtype=np.float32), device)
 
-    keane = evaluate_keane_metrics(
-        original_ts_list=np.asarray(sample, dtype=np.float32),
-        counterfactual_ts_list=np.asarray(cf, dtype=np.float32),
-        model=_model_fn,
-        target_classes=int(target_class),
-    )
-
     s_ch = _to_channel_first(np.asarray(sample, dtype=np.float32))
     c_ch = _to_channel_first(np.asarray(cf, dtype=np.float32))
-    dtw_dist = float(dtw_distance(s_ch, c_ch))
-    validity = float(prediction_change(s_ch, c_ch, _model_fn, target_class=target_class))
-    sparsity = 1.0 - pct_changed / 100.0
+
+    _m = evaluate_counterfactual(
+        s_ch, c_ch,
+        model=_model_fn, target_class=int(target_class),
+        reference_data=reference_data,
+    )
 
     return {
         "method": method, "elapsed": elapsed,
         "pred_class": pred_class, "confidence": confidence,
-        "l2_distance": l2_dist, "pct_changed": pct_changed,
-        "normalized_distance": norm_dist, "temporal_consistency": temp_cons,
-        "range_validity": range_val, "autocorr_preservation": autocorr,
-        "dtw_distance": dtw_dist, "validity": validity, "sparsity": sparsity,
-        "keane_validity": float(keane["validity"]),
-        "keane_proximity": float(keane["proximity"]),
-        "keane_compactness": float(keane["compactness"]),
+        "l2_distance": _m["l2_distance"],
+        "euclidean_dist_zscore": _m["euclidean_dist_zscore"],
+        "manhattan_distance": _m["manhattan_distance"],
+        "pct_changed": _m["pct_changed"] * 100.0,
+        "normalized_distance": _m["normalized_distance"],
+        "l0_norm": _m["l0_norm"],
+        "compactness": _m["compactness"],
+        "temporal_consistency": _m["temporal_consistency"],
+        "range_validity": _m.get("range_validity", float("nan")),
+        "autocorr_preservation": _m["autocorr_preservation"],
+        "validity": _m["validity"],
+        "sparsity": _m["sparsity"],
+        "keane_validity": _m["keane_validity"],
+        "keane_proximity": _m["keane_proximity"],
+        "keane_compactness": _m["keane_compactness"],
         "sample": np.asarray(sample, dtype=np.float32),
         "counterfactual": np.asarray(cf, dtype=np.float32),
     }
@@ -400,12 +387,15 @@ def _summarize_results(
             "validity_rate": 100.0 * float(np.mean([r.get("validity", 0.0) for r in method_rows])) if method_rows else 0.0,
             "avg_confidence": _avg("confidence"),
             "avg_l2_distance": _avg("l2_distance"),
+            "avg_euclidean_dist_zscore": _avg("euclidean_dist_zscore"),
+            "avg_manhattan_distance": _avg("manhattan_distance"),
             "avg_pct_changed": _avg("pct_changed"),
             "avg_normalized_distance": _avg("normalized_distance"),
+            "avg_l0_norm": _avg("l0_norm"),
+            "avg_compactness": _avg("compactness"),
             "avg_temporal_consistency": _avg("temporal_consistency"),
             "avg_range_validity": _avg("range_validity"),
             "avg_autocorr_preservation": _avg("autocorr_preservation"),
-            "avg_dtw_distance": _avg("dtw_distance"),
             "avg_validity": _avg("validity"),
             "avg_sparsity": _avg("sparsity"),
             "avg_keane_validity": float(np.mean([r["keane_validity"] for r in keane_rows])) if keane_rows else 0.0,
@@ -422,19 +412,21 @@ def _print_summary(title: str, methods: Sequence[str], summary_rows: Sequence[Di
     print(title)
     print("=" * 80)
     print(
-        f"{'Method':<{w}} {'Validity':<9} {'Conf':<7} {'L2':<9} {'%Chg':<7} "
-        f"{'NormD':<8} {'TmpC':<7} {'RngV':<7} {'ACorr':<7} "
-        f"{'DTW':<9} {'Valid':<7} {'Spar':<7} "
+        f"{'Method':<{w}} {'Validity':<9} {'Conf':<7} {'L2':<9} {'ZL2':<9} {'L1':<9} {'%Chg':<7} "
+        f"{'NormD':<8} {'L0':<7} {'Cmpt':<7} {'TmpC':<7} {'RngV':<7} {'ACorr':<7} "
+        f"{'Valid':<7} {'Spar':<7} "
         f"{'K.Val':<7} {'K.Prx':<8} {'K.Cmp':<8} {'Time':<7}"
     )
     print("-" * 80)
     for row in summary_rows:
         print(
             f"{row['method']:<{w}} {row['validity_rate']:<9.1f} {row['avg_confidence']:<7.4f} "
-            f"{row['avg_l2_distance']:<9.2f} {row['avg_pct_changed']:<7.2f} "
-            f"{row['avg_normalized_distance']:<8.4f} {row['avg_temporal_consistency']:<7.4f} "
+            f"{row['avg_l2_distance']:<9.2f} {row['avg_euclidean_dist_zscore']:<9.2f} {row['avg_manhattan_distance']:<9.2f} "
+            f"{row['avg_pct_changed']:<7.2f} "
+            f"{row['avg_normalized_distance']:<8.4f} {row['avg_l0_norm']:<7.1f} {row['avg_compactness']:<7.4f} "
+            f"{row['avg_temporal_consistency']:<7.4f} "
             f"{row['avg_range_validity']:<7.4f} {row['avg_autocorr_preservation']:<7.4f} "
-            f"{row['avg_dtw_distance']:<9.2f} {row['avg_validity']:<7.4f} {row['avg_sparsity']:<7.4f} "
+            f"{row['avg_validity']:<7.4f} {row['avg_sparsity']:<7.4f} "
             f"{row['avg_keane_validity']:<7.4f} {row['avg_keane_proximity']:<8.4f} "
             f"{row['avg_keane_compactness']:<8.4f} {row['avg_time']:<7.4f}"
         )
@@ -443,9 +435,10 @@ def _print_summary(title: str, methods: Sequence[str], summary_rows: Sequence[Di
 def _save_summary_csv(csv_path: str, summary_rows: Sequence[Dict[str, object]]):
     fieldnames = [
         "method", "validity_rate", "avg_confidence",
-        "avg_l2_distance", "avg_pct_changed", "avg_normalized_distance",
+        "avg_l2_distance", "avg_euclidean_dist_zscore", "avg_manhattan_distance",
+        "avg_pct_changed", "avg_normalized_distance", "avg_l0_norm", "avg_compactness",
         "avg_temporal_consistency", "avg_range_validity", "avg_autocorr_preservation",
-        "avg_dtw_distance", "avg_validity", "avg_sparsity",
+        "avg_validity", "avg_sparsity",
         "avg_keane_validity", "avg_keane_proximity", "avg_keane_compactness",
         "avg_time",
     ]
@@ -498,18 +491,22 @@ def _save_summary_plot(
     validity_rates = [r["validity_rate"] for r in summary_rows]
     confidences = [r["avg_confidence"] for r in summary_rows]
     l2_distances = [r["avg_l2_distance"] for r in summary_rows]
+    zscore_distances = [r["avg_euclidean_dist_zscore"] for r in summary_rows]
+    manhattan_distances = [r["avg_manhattan_distance"] for r in summary_rows]
     pct_changed = [r["avg_pct_changed"] for r in summary_rows]
     norm_distances = [r["avg_normalized_distance"] for r in summary_rows]
+    l0_norms = [r["avg_l0_norm"] for r in summary_rows]
+    compactnesses = [r["avg_compactness"] for r in summary_rows]
     range_validities = [r["avg_range_validity"] for r in summary_rows]
     keane_validities = [r["avg_keane_validity"] for r in summary_rows]
     keane_proximities = [r["avg_keane_proximity"] for r in summary_rows]
     keane_compactnesses = [r["avg_keane_compactness"] for r in summary_rows]
-    dtw_distances = [r["avg_dtw_distance"] for r in summary_rows]
     validities = [r["avg_validity"] for r in summary_rows]
     sparsities = [r["avg_sparsity"] for r in summary_rows]
+    avg_times = [r["avg_time"] for r in summary_rows]
 
-    fig_height = max(20, 0.85 * len(names) + 16)
-    fig, axes = plt.subplots(4, 3, figsize=(18, fig_height))
+    fig_height = max(28, 0.85 * len(names) + 24)
+    fig, axes = plt.subplots(5, 4, figsize=(22, fig_height))
     fig.suptitle(title, fontsize=14, fontweight="bold")
 
     axes[0, 0].barh(names, validity_rates, color="steelblue")
@@ -529,6 +526,11 @@ def _save_summary_plot(
     axes[0, 2].set_xlim(left=0, right=1.05)
     _mark_best_barh(axes[0, 2], keane_validities, higher_is_better=True)
 
+    axes[0, 3].barh(names, zscore_distances, color="mediumvioletred")
+    axes[0, 3].set_title("Euclidean Dist (z-score)")
+    axes[0, 3].set_xlim(left=0)
+    _mark_best_barh(axes[0, 3], zscore_distances, higher_is_better=False)
+
     axes[1, 0].barh(names, l2_distances, color="darkorange")
     axes[1, 0].set_title("Average L2 Distance")
     axes[1, 0].set_xlim(left=0)
@@ -543,6 +545,11 @@ def _save_summary_plot(
     axes[1, 2].set_title("Keane Proximity")
     axes[1, 2].set_xlim(left=0)
     _mark_best_barh(axes[1, 2], keane_proximities, higher_is_better=False)
+
+    axes[1, 3].barh(names, manhattan_distances, color="chocolate")
+    axes[1, 3].set_title("Average Manhattan Distance")
+    axes[1, 3].set_xlim(left=0)
+    _mark_best_barh(axes[1, 3], manhattan_distances, higher_is_better=False)
 
     axes[2, 0].barh(names, norm_distances, color="darkviolet")
     axes[2, 0].set_title("Normalized Distance")
@@ -559,10 +566,15 @@ def _save_summary_plot(
     axes[2, 2].set_xlim(left=0, right=1.05)
     _mark_best_barh(axes[2, 2], keane_compactnesses, higher_is_better=True)
 
-    axes[3, 0].barh(names, dtw_distances, color="royalblue")
-    axes[3, 0].set_title("Average DTW Distance")
+    axes[2, 3].barh(names, l0_norms, color="indianred")
+    axes[2, 3].set_title("Average L0 Norm (# changed points)")
+    axes[2, 3].set_xlim(left=0)
+    _mark_best_barh(axes[2, 3], l0_norms, higher_is_better=False)
+
+    axes[3, 0].barh(names, avg_times, color="slategray")
+    axes[3, 0].set_title("Average Execution Time (s, lower better)")
     axes[3, 0].set_xlim(left=0)
-    _mark_best_barh(axes[3, 0], dtw_distances, higher_is_better=False)
+    _mark_best_barh(axes[3, 0], avg_times, higher_is_better=False)
 
     axes[3, 1].barh(names, validities, color="crimson")
     axes[3, 1].set_title("Validity (prediction_change)")
@@ -574,6 +586,14 @@ def _save_summary_plot(
     axes[3, 2].set_xlim(left=0, right=1.05)
     _mark_best_barh(axes[3, 2], sparsities, higher_is_better=True)
 
+    axes[3, 3].barh(names, compactnesses, color="cadetblue")
+    axes[3, 3].set_title("Compactness (higher better)")
+    axes[3, 3].set_xlim(left=0, right=1.05)
+    _mark_best_barh(axes[3, 3], compactnesses, higher_is_better=True)
+
+    for ax in axes[4, :]:
+        ax.axis("off")
+
     for ax in axes.flat:
         ax.grid(True, axis="x", alpha=0.25)
 
@@ -581,6 +601,42 @@ def _save_summary_plot(
     plt.savefig(plot_path, dpi=150)
     plt.close()
     print(f"Saved plot: {plot_path}")
+
+    # Canonical CF-evaluation dimensions: validity (higher better), proximity
+    # (lower better), sparsity (higher better), plausibility (higher better).
+    canonical_path = (
+        f"{plot_path[:-4]}_canonical.png" if plot_path.endswith(".png") else f"{plot_path}_canonical.png"
+    )
+    fig2, axes2 = plt.subplots(1, 4, figsize=(22, max(5, 0.4 * len(names) + 3)))
+    fig2.suptitle(f"{title} — Validity / Proximity / Sparsity / Plausibility", fontsize=14, fontweight="bold")
+
+    axes2[0].barh(names, validity_rates, color="steelblue")
+    axes2[0].set_title("Validity ↑")
+    axes2[0].set_xlim([0, 105])
+    _mark_best_barh(axes2[0], validity_rates, higher_is_better=True)
+
+    axes2[1].barh(names, l2_distances, color="darkorange")
+    axes2[1].set_title("Proximity ↓ (L2)")
+    axes2[1].set_xlim(left=0)
+    _mark_best_barh(axes2[1], l2_distances, higher_is_better=False)
+
+    axes2[2].barh(names, sparsities, color="goldenrod")
+    axes2[2].set_title("Sparsity ↑")
+    axes2[2].set_xlim(left=0, right=1.05)
+    _mark_best_barh(axes2[2], sparsities, higher_is_better=True)
+
+    axes2[3].barh(names, range_validities, color="teal")
+    axes2[3].set_title("Plausibility ↑")
+    axes2[3].set_xlim(left=0, right=1.05)
+    _mark_best_barh(axes2[3], range_validities, higher_is_better=True)
+
+    for ax in axes2.flat:
+        ax.grid(True, axis="x", alpha=0.25)
+
+    plt.tight_layout(rect=[0, 0.01, 1, 0.9])
+    plt.savefig(canonical_path, dpi=150)
+    plt.close(fig2)
+    print(f"Saved canonical summary plot: {canonical_path}")
 
 
 def _save_sample_line_plot(

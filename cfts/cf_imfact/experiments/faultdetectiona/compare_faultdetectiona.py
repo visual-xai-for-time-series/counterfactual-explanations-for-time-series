@@ -13,12 +13,15 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+os.environ.setdefault("OMP_MAX_ACTIVE_LEVELS", "1")  # suppress OMP nested-parallelism info before umap/numba load
+os.environ.setdefault("NUMBA_NUM_THREADS", "1")      # prevent numba thread-pool deadlock with MASCOTS prange
 import umap
 from sklearn.metrics import f1_score
 
@@ -51,27 +54,19 @@ from base.model import SimpleCNN
 from cfts.cf_imfact.imfact import imfact_cf
 from cfts.cf_native_guide.native_guide import native_guide_uni_cf
 from cfts.cf_wachter.wachter import wachter_gradient_cf
-from cfts.metrics import (
-    autocorrelation_preservation,
-    dtw_distance,
-    evaluate_keane_metrics,
-    feature_range_validity,
-    l2_distance,
-    normalized_distance,
-    percentage_changed_points,
-    prediction_change,
-    temporal_consistency,
-)
+from cfts.metrics import evaluate_counterfactual
 
 plt.style.use("seaborn-v0_8-darkgrid")
 plt.rcParams.update({"font.size": 14})
 
 METHOD_COLORS = {
-    "imfact_variance_nun3": "#e63946",
+    "imfact_default": "#e63946",
     "native_guide": "#1d3557",
     "wachter": "#ff7f11",
+    "glacier": "#2a9d8f",
+    "mascots": "#8338ec",
 }
-BAR_COLORS = ["#2a9d8f", "#457b9d", "#e76f51"]
+BAR_COLORS = ["#2a9d8f", "#457b9d", "#e76f51", "#06d6a0", "#8338ec"]
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +107,25 @@ def model_wrapper_factory(model: torch.nn.Module, device: torch.device):
     return wrapped
 
 
+class _SubsetView:
+    """Limits a dataset to its first max_size items to avoid OOM on large datasets."""
+
+    def __init__(self, dataset, max_size: int):
+        self._dataset = dataset
+        self._max_size = min(max_size, len(dataset))
+
+    def __len__(self):
+        return self._max_size
+
+    def __getitem__(self, idx):
+        if idx >= self._max_size:
+            raise IndexError(idx)
+        return self._dataset[idx]
+
+    def __getattr__(self, name):
+        return getattr(self._dataset, name)
+
+
 def select_correct_indices(model, dataset, max_count: int, device) -> list[int]:
     selected = []
     for idx in range(len(dataset)):
@@ -132,24 +146,24 @@ def infer_target_class(scores: np.ndarray) -> int:
 # CF runners
 # ---------------------------------------------------------------------------
 
-def run_imfact_variance(sample, dataset, model, target_class):
+def run_imfact_default(sample, dataset, model, target_class):
     return imfact_cf(
         sample=sample,
         dataset=dataset,
         model=model,
-        method="variance",
-        guide_class=target_class,
+        method="distance",
+        target_class=target_class,
         step=0.05,
         max_iter=200,
         max_imfs=10,
-        n_nuns=3,
+        n_nuns=1,
         nun_switch="cycle",
         verbose=False,
     )
 
 
 def run_native_guide(sample, dataset, model, target_class):
-    return native_guide_uni_cf(sample=sample, dataset=dataset, model=model)
+    return native_guide_uni_cf(sample=sample, model=model, target_class=target_class, dataset=dataset)
 
 
 def run_wachter(sample, dataset, model, target_class):
@@ -164,25 +178,101 @@ def run_wachter(sample, dataset, model, target_class):
     )
 
 
+def run_glacier(sample, dataset, model, target_class):
+    from cfts.cf_glacier.glacier import glacier_cf
+    return glacier_cf(
+        sample=sample, dataset=dataset, model=model,
+        target_class=target_class, max_iterations=500, verbose=False,
+    )
+
+
+_MASCOTS_EXPLAINER_CACHE = None
+
+def _get_mascots_explainer(dataset, model):
+    global _MASCOTS_EXPLAINER_CACHE
+    if _MASCOTS_EXPLAINER_CACHE is not None:
+        return _MASCOTS_EXPLAINER_CACHE
+
+    import torch
+    from cfts.cf_mascots._borf_explainer import BorfExplainer
+    from cfts.cf__abstract.abstract import ensure_ncl, subsample_dataset, detach_to_numpy
+    from cfts.cf__abstract.abstract import numpy_to_torch
+
+    device = next(model.parameters()).device
+    ds = subsample_dataset(dataset, 50)
+    dummy_sample = np.asarray(dataset[0][0], dtype=np.float32)
+    _, ts, _ = ensure_ncl(dummy_sample, ds)
+
+    def _pred_fn(X):
+        X_t = numpy_to_torch(np.asarray(X, dtype=np.float32), device)
+        with torch.no_grad():
+            logits = detach_to_numpy(model(X_t))
+        return np.argmax(logits, axis=1).astype(int)
+
+    def _pred_proba_fn(X):
+        X_t = numpy_to_torch(np.asarray(X, dtype=np.float32), device)
+        with torch.no_grad():
+            logits = detach_to_numpy(model(X_t))
+        e = np.exp(logits - logits.max(axis=1, keepdims=True))
+        return e / e.sum(axis=1, keepdims=True)
+
+    # Compact borf config: small window sizes suitable for long series (L=5120)
+    compact_config = [
+        {"window_size": ws, "stride": 1, "dilation": 1, "word_length": 4, "alphabet_size": 3}
+        for ws in [16, 64, 256]
+    ]
+    print("[mascots] building BorfExplainer (once) …")
+    try:
+        import numba
+        _prev_threads = numba.get_num_threads()
+        numba.set_num_threads(1)
+    except Exception:
+        _prev_threads = None
+    explainer = BorfExplainer(_pred_fn, _pred_proba_fn, borf_config=compact_config)
+    explainer.build(ts, seed=42)
+    if _prev_threads is not None:
+        try:
+            numba.set_num_threads(_prev_threads)
+        except Exception:
+            pass
+    print("[mascots] BorfExplainer ready.")
+    _MASCOTS_EXPLAINER_CACHE = explainer
+    return _MASCOTS_EXPLAINER_CACHE
+
+
+def run_mascots(sample, dataset, model, target_class):
+    from cfts.cf_mascots.mascots import mascots_cf
+    explainer = _get_mascots_explainer(dataset, model)
+    return mascots_cf(
+        sample=sample, model=model,
+        target_class=target_class, dataset=dataset,
+        max_iter=100, verbose=False,
+        prebuilt_explainer=explainer,
+    )
+
+
 RUNNERS = {
-    "imfact_variance_nun3": run_imfact_variance,
+    "imfact_default": run_imfact_default,
     "native_guide": run_native_guide,
     "wachter": run_wachter,
+    "glacier": run_glacier,
+    "mascots": run_mascots,
 }
 
-METHOD_ORDER = ["imfact_variance_nun3", "native_guide", "wachter"]
+METHOD_ORDER: list[str] = ["imfact_default", "native_guide", "wachter", "glacier", "mascots"]
 
 
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate(selected_indices, dataset_test, model, device, reference_data) -> tuple[pd.DataFrame, dict]:
+def evaluate(selected_indices, dataset_test, model, device, reference_data, search_dataset=None) -> tuple[pd.DataFrame, dict]:
     model_for_metrics = model_wrapper_factory(model, device)
     records = []
     all_cf_outputs: dict = {}
 
-    for idx in selected_indices:
+    for i, idx in enumerate(selected_indices):
+        print(f"  [{i + 1}/{len(selected_indices)}] sample {idx}", flush=True)
         sample, label = dataset_test[idx]
         sample = np.asarray(sample, dtype=np.float32)
 
@@ -202,7 +292,6 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
                 "target_class": target_class,
                 "pred_cf": None,
                 "l2_norm": np.nan,
-                "dtw_proximity": np.nan,
                 "normalized_distance": np.nan,
                 "sparsity": np.nan,
                 "range_validity": np.nan,
@@ -213,17 +302,22 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
                 "validity": 0.0,
                 "temporal_consistency": np.nan,
                 "confidence": np.nan,
+                "elapsed": np.nan,
                 "error": None,
             }
 
+            start_time = time.time()
             try:
-                cf, pred_cf_scores = RUNNERS[method_name](sample, dataset_test, model, target_class)
+                ds = dataset_test if method_name == "imfact_default" else (search_dataset or dataset_test)
+                cf, pred_cf_scores = RUNNERS[method_name](sample, ds, model, target_class)
             except Exception as exc:
-                records.append({**base, "error": f"{type(exc).__name__}: {exc}"})
+                elapsed = time.time() - start_time
+                records.append({**base, "elapsed": elapsed, "error": f"{type(exc).__name__}: {exc}"})
                 continue
+            elapsed = time.time() - start_time
 
             if cf is None or pred_cf_scores is None:
-                records.append({**base, "error": "Method returned None"})
+                records.append({**base, "elapsed": elapsed, "error": "Method returned None"})
                 continue
 
             cf = np.asarray(cf, dtype=np.float32)
@@ -235,27 +329,26 @@ def evaluate(selected_indices, dataset_test, model, device, reference_data) -> t
             s_cf = to_channel_first(sample)
             c_cf = to_channel_first(cf)
 
-            keane = evaluate_keane_metrics(
-                original_ts_list=s_cf,
-                counterfactual_ts_list=c_cf,
-                model=model_for_metrics,
-                target_classes=int(target_class),
+            _m = evaluate_counterfactual(
+                s_cf, c_cf,
+                model=model_for_metrics, target_class=int(target_class),
+                reference_data=reference_data,
             )
 
             records.append({
                 **base,
+                "elapsed": elapsed,
                 "pred_cf": pred_cf,
-                "l2_norm": float(l2_distance(s_cf, c_cf)),
-                "dtw_proximity": float(dtw_distance(s_cf, c_cf)),
-                "normalized_distance": float(normalized_distance(s_cf.reshape(-1), c_cf.reshape(-1))),
-                "sparsity": float(1.0 - percentage_changed_points(s_cf, c_cf)),
-                "range_validity": float(feature_range_validity(c_cf, reference_data)),
-                "autocorr": float(autocorrelation_preservation(s_cf, c_cf)),
-                "keane_validity": float(keane["validity"]),
-                "keane_proximity": float(keane["proximity"]),
-                "keane_compactness": float(keane["compactness"]),
-                "validity": float(prediction_change(s_cf, c_cf, model_for_metrics, target_class=target_class)),
-                "temporal_consistency": float(temporal_consistency(c_cf)),
+                "l2_norm": _m["l2_distance"],
+                "normalized_distance": _m["normalized_distance"],
+                "sparsity": _m["sparsity"],
+                "range_validity": _m.get("range_validity", np.nan),
+                "autocorr": _m["autocorr_preservation"],
+                "keane_validity": _m["keane_validity"],
+                "keane_proximity": _m["keane_proximity"],
+                "keane_compactness": _m["keane_compactness"],
+                "validity": _m["validity"],
+                "temporal_consistency": _m["temporal_consistency"],
                 "confidence": cf_confidence,
             })
 
@@ -275,6 +368,7 @@ def build_summary(results_df: pd.DataFrame) -> pd.DataFrame:
         .agg(
             n_total=("sample_idx", "count"),
             validity_rate=("validity", "mean"),
+            elapsed_mean=("elapsed", "mean"),
         )
         .reset_index()
     )
@@ -282,7 +376,6 @@ def build_summary(results_df: pd.DataFrame) -> pd.DataFrame:
         successful_df.groupby("method", dropna=False)
         .agg(
             l2_norm_mean=("l2_norm", "mean"),
-            dtw_proximity_mean=("dtw_proximity", "mean"),
             normalized_distance_mean=("normalized_distance", "mean"),
             sparsity_mean=("sparsity", "mean"),
             range_validity_mean=("range_validity", "mean"),
@@ -317,10 +410,11 @@ def plot_bar_metrics(summary_df: pd.DataFrame, out_path: str) -> None:
         ax.grid(True, axis="y", alpha=0.3)
 
     l2_score = 1.0 / (1.0 + plot_df["l2_norm_mean"])
-    dtw_score = 1.0 / (1.0 + plot_df["dtw_proximity_mean"])
     norm_dist_score = 1.0 / (1.0 + plot_df["normalized_distance_mean"])
 
-    fig, axes = plt.subplots(4, 3, figsize=(16, 16))
+    time_max = max(float(plot_df["elapsed_mean"].fillna(0).max()) * 1.1, 0.01)
+
+    fig, axes = plt.subplots(5, 3, figsize=(16, 20))
     _bar(axes[0, 0], plot_df["validity_rate"], "Validity (higher better)")
     _bar(axes[0, 1], plot_df["sparsity_mean"], "Sparsity (higher better)")
     _bar(axes[0, 2], plot_df["range_validity_mean"], "Range Validity (higher better)")
@@ -328,17 +422,54 @@ def plot_bar_metrics(summary_df: pd.DataFrame, out_path: str) -> None:
     _bar(axes[1, 1], plot_df["keane_validity_mean"], "Keane Validity (higher better)")
     _bar(axes[1, 2], plot_df["keane_compactness_mean"], "Keane Compactness (higher better)")
     _bar(axes[2, 0], l2_score, "L2 Proximity Score (higher better)")
-    _bar(axes[2, 1], dtw_score, "DTW Proximity Score (higher better)")
-    _bar(axes[2, 2], norm_dist_score, "Normalised Distance Score (higher better)")
+    _bar(axes[2, 1], norm_dist_score, "Normalised Distance Score (higher better)")
+    axes[2, 2].axis("off")
     _bar(axes[3, 0], plot_df["temporal_consistency_mean"], "Temporal Consistency (higher better)")
     _bar(axes[3, 1], plot_df["confidence_mean"], "Confidence (higher better)")
     _bar(axes[3, 2], plot_df["keane_proximity_mean"], "Keane Proximity (lower better)", ylim=(0, max(plot_df["keane_proximity_mean"].fillna(0).max() * 1.1, 0.01)))
+    _bar(axes[4, 0], plot_df["elapsed_mean"], "Average Execution Time (s, lower better)", ylim=(0, time_max))
+    axes[4, 1].axis("off")
+    axes[4, 2].axis("off")
 
     fig.suptitle("FaultDetectionA — IMFACT vs Native Guide vs Wachter", fontsize=13, y=1.01)
     plt.tight_layout()
     plt.savefig(out_path, dpi=120, bbox_inches="tight")
     plt.close()
     print(f"Saved bar chart: {out_path}")
+
+    # Canonical CF-evaluation dimensions: validity (higher better), proximity
+    # (lower better), sparsity (higher better), plausibility (higher better).
+    canonical_path = f"{out_path[:-4]}_canonical.png" if out_path.endswith(".png") else f"{out_path}_canonical.png"
+    fig2, axes2 = plt.subplots(1, 4, figsize=(20, 4.5))
+    fig2.suptitle("FaultDetectionA — Validity / Proximity / Sparsity / Plausibility", fontsize=13, y=1.05)
+
+    axes2[0].bar(methods, plot_df["validity_rate"], color=colors)
+    axes2[0].set_title("Validity ↑")
+    axes2[0].set_ylim(0, 1.05)
+    axes2[0].tick_params(axis="x", rotation=20)
+    axes2[0].grid(True, axis="y", alpha=0.3)
+
+    axes2[1].bar(methods, plot_df["l2_norm_mean"], color=colors)
+    axes2[1].set_title("Proximity ↓ (L2)")
+    axes2[1].tick_params(axis="x", rotation=20)
+    axes2[1].grid(True, axis="y", alpha=0.3)
+
+    axes2[2].bar(methods, plot_df["sparsity_mean"], color=colors)
+    axes2[2].set_title("Sparsity ↑")
+    axes2[2].set_ylim(0, 1.05)
+    axes2[2].tick_params(axis="x", rotation=20)
+    axes2[2].grid(True, axis="y", alpha=0.3)
+
+    axes2[3].bar(methods, plot_df["range_validity_mean"], color=colors)
+    axes2[3].set_title("Plausibility ↑")
+    axes2[3].set_ylim(0, 1.05)
+    axes2[3].tick_params(axis="x", rotation=20)
+    axes2[3].grid(True, axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(canonical_path, dpi=120, bbox_inches="tight")
+    plt.close(fig2)
+    print(f"Saved canonical summary plot: {canonical_path}")
 
 
 def plot_umap(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: list, dataset_test, out_path: str) -> None:
@@ -366,6 +497,7 @@ def plot_umap(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: 
         min_dist=0.15,
         metric="euclidean",
         random_state=42,
+        n_jobs=1,
     )
     background_emb = reducer.fit_transform(background_data)
     sample_emb = reducer.transform(rep_sample)[0]
@@ -374,7 +506,6 @@ def plot_umap(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: 
     metric_lookup = {
         row["method"]: {
             "l2": float(row["l2_norm"]),
-            "dtw": float(row["dtw_proximity"]),
             "validity": float(row["validity"]) if not pd.isna(row["validity"]) else 0.0,
             "pred": int(row["pred_cf"]) if not pd.isna(row["pred_cf"]) else None,
         }
@@ -399,12 +530,11 @@ def plot_umap(results_df: pd.DataFrame, all_cf_outputs: dict, selected_indices: 
         cf_emb = reducer.transform(to_channel_first(cf).reshape(1, -1))[0]
         m = metric_lookup.get(method_name, {})
         l2_val = m.get("l2", np.nan)
-        dtw_val = m.get("dtw", np.nan)
         worked = m.get("validity", 0.0) == 1.0
         pred_cf = m.get("pred", None)
 
         annotation_lines.append(
-            f"{method_name}: pred={pred_cf}, L2={l2_val:.3f}, DTW={dtw_val:.3f}, {'OK' if worked else 'FAIL'}"
+            f"{method_name}: pred={pred_cf}, L2={l2_val:.3f}, {'OK' if worked else 'FAIL'}"
         )
         ax.scatter(
             cf_emb[0], cf_emb[1],
@@ -504,11 +634,23 @@ def parse_args():
     parser.add_argument("--n-samples", type=int, default=50, help="Number of correctly classified test samples to evaluate")
     parser.add_argument("--out-dir", type=str, default=os.path.join(SCRIPT_DIR, "results"), help="Directory for saved outputs")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--exclude-glacier", action="store_true",
+                        help="Exclude Glacier from the comparison (useful for very long series).")
+    parser.add_argument("--exclude-mascots", action="store_true",
+                        help="Exclude MASCOTS from the comparison (useful for very long series).")
+    parser.add_argument("--max-search-samples", type=int, default=500,
+                        help="Max dataset size passed to native_guide/glacier/mascots to avoid OOM (default: 500).")
     return parser.parse_args()
 
 
 def main():
+    global METHOD_ORDER
     args = parse_args()
+
+    if args.exclude_glacier:
+        METHOD_ORDER = [m for m in METHOD_ORDER if m != "glacier"]
+    if args.exclude_mascots:
+        METHOD_ORDER = [m for m in METHOD_ORDER if m != "mascots"]
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -565,7 +707,11 @@ def main():
     selected_indices = select_correct_indices(model, dataset_test, max_count=args.n_samples, device=device)
     print(f"Evaluating {len(selected_indices)} correctly classified samples …")
 
-    results_df, all_cf_outputs = evaluate(selected_indices, dataset_test, model, device, reference_data)
+    search_dataset = _SubsetView(dataset_test, args.max_search_samples)
+    if len(search_dataset) < len(dataset_test):
+        print(f"Search dataset capped at {len(search_dataset)} samples for native_guide/glacier/mascots")
+
+    results_df, all_cf_outputs = evaluate(selected_indices, dataset_test, model, device, reference_data, search_dataset)
 
     summary_df = build_summary(results_df)
     print("\n=== Summary ===")

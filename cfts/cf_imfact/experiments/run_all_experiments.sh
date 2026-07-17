@@ -16,7 +16,7 @@
 # Options:
 #   --out-dir DIR                Root output directory (default: ./results)
 #   --n-samples N                Test samples for compare scripts (default: 50)
-#   --fruitflies-n-samples N     Override --n-samples for FruitFlies compare (default: min(n-samples,10))
+#   --fruitflies-n-samples N     Override --n-samples for FruitFlies compare (default: same as --n-samples)
 #   --ablation-max-samples N     --max-samples for ablation scripts (default: 8)
 #   --ablation-max-plot-samples N  --max-plot-samples for ablation scripts (default: 1)
 #   --multi-nun-counts COUNTS    Comma-separated n_nuns values (default: 2,3,5)
@@ -24,6 +24,9 @@
 #   --seed N                     Random seed for compare scripts (default: 42)
 #   --skip NAMES...              Space-separated experiment names to skip
 #   --only NAMES...              Run only these experiments (overrides --skip)
+#   --exclude-glacier-long       Exclude Glacier from long-series experiments (FaultDetectionA, FruitFlies)
+#   --exclude-mascots-long       Exclude MASCOTS from long-series experiments (FaultDetectionA, FruitFlies) (default: on)
+#   --include-mascots-long       Include MASCOTS in long-series experiments (overrides the default exclusion)
 #   --help                       Show this help and exit
 #
 # Available experiment names: faultdetectiona_ablation faultdetectiona_compare
@@ -46,6 +49,8 @@ DOWNSAMPLE=1
 SEED=42
 SKIP=()
 ONLY=()
+INCLUDE_GLACIER_LONG=1
+INCLUDE_MASCOTS_LONG=0
 
 ALL_EXPERIMENTS=(
     faultdetectiona_ablation
@@ -67,6 +72,9 @@ while [[ $# -gt 0 ]]; do
         --multi-nun-counts)          MULTI_NUN_COUNTS="$2";           shift 2 ;;
         --downsample)                DOWNSAMPLE="$2";                 shift 2 ;;
         --seed)                      SEED="$2";                       shift 2 ;;
+        --exclude-glacier-long)          INCLUDE_GLACIER_LONG=0;          shift ;;
+        --exclude-mascots-long)          INCLUDE_MASCOTS_LONG=0;          shift ;;
+        --include-mascots-long)          INCLUDE_MASCOTS_LONG=1;          shift ;;
         --skip)
             shift
             while [[ $# -gt 0 && "$1" != --* ]]; do
@@ -114,10 +122,16 @@ for name in "${SKIP[@]}"; do
     TO_RUN[$name]=0
 done
 
-# Default FruitFlies sample count: min(N_SAMPLES, 10)
+# Default FruitFlies sample count matches --n-samples unless overridden.
 if [[ -z "$FRUITFLIES_N_SAMPLES" ]]; then
-    FRUITFLIES_N_SAMPLES=$(( N_SAMPLES < 10 ? N_SAMPLES : 10 ))
+    FRUITFLIES_N_SAMPLES="$N_SAMPLES"
 fi
+
+# Build exclude-flags array for long-series compare scripts (FaultDetectionA, FruitFlies).
+# Pass --exclude-glacier-long / --exclude-mascots-long to disable them if OOM occurs.
+LONG_SERIES_EXCLUDE_FLAGS=()
+[[ "$INCLUDE_GLACIER_LONG" -eq 0 ]] && LONG_SERIES_EXCLUDE_FLAGS+=("--exclude-glacier")
+[[ "$INCLUDE_MASCOTS_LONG" -eq 0 ]] && LONG_SERIES_EXCLUDE_FLAGS+=("--exclude-mascots")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -183,7 +197,8 @@ if [[ "${TO_RUN[faultdetectiona_compare]}" -eq 1 ]]; then
         "$PYTHON" "$SCRIPT_DIR/faultdetectiona/compare_faultdetectiona.py" \
         --n-samples "$N_SAMPLES" \
         --out-dir "$OUT_DIR/faultdetectiona_compare" \
-        --seed "$SEED"
+        --seed "$SEED" \
+        "${LONG_SERIES_EXCLUDE_FLAGS[@]}"
 else
     echo ""
     echo "[faultdetectiona_compare] SKIPPED"
@@ -207,7 +222,8 @@ if [[ "${TO_RUN[fruitflies_compare]}" -eq 1 ]]; then
         "$PYTHON" "$SCRIPT_DIR/fruitflies/compare_fruitflies.py" \
         --n-samples "$FRUITFLIES_N_SAMPLES" \
         --out-dir "$OUT_DIR/fruitflies_compare" \
-        --seed "$SEED"
+        --seed "$SEED" \
+        "${LONG_SERIES_EXCLUDE_FLAGS[@]}"
 else
     echo ""
     echo "[fruitflies_compare] SKIPPED"
