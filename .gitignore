@@ -139,3 +139,7 @@ publish_to_pypi.bash
 .pypi*
 
 data/
+
+# Vendored external reference repos (cloned for baseline comparisons, not part of this repo)
+**/external/
+lightning_logs/

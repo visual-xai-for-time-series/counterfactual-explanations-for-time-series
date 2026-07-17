@@ -233,9 +233,11 @@ def wachter_gradient_cf(sample,
     sample_cf.requires_grad_(True)
     optimizer = Adam([sample_cf], lr=1e-2)  # Increased learning rate
 
-    cfs = []
     best_validity = 0.0
-    
+    best_loss = None
+    best_cf = None
+    best_pred = None
+
     for iteration in range(max_cfs):
         optimizer.zero_grad()
         pred = model(sample_cf)
@@ -247,13 +249,19 @@ def wachter_gradient_cf(sample,
         if iteration % 10 == 0:  # Only increase every 10 iterations
             lb += lb_step
 
-        # record candidate
-        y_cf = detach_to_numpy(model(sample_cf))[0]
+        # record candidate — no_grad since this is a diagnostic-only forward pass
+        with torch.no_grad():
+            y_cf = detach_to_numpy(model(sample_cf))[0]
         sample_cf_np = detach_to_numpy(sample_cf.squeeze(0))  # Remove batch dimension
         current_validity = y_cf[target]
-        
-        cfs.append([sample_cf_np, float(loss.item()), y_cf])
-        
+        current_loss = float(loss.item())
+
+        # keep only the best candidate seen so far instead of the full history
+        if best_loss is None or current_loss < best_loss:
+            best_loss = current_loss
+            best_cf = sample_cf_np
+            best_pred = y_cf
+
         # Track best validity
         if current_validity > best_validity:
             best_validity = current_validity
@@ -269,19 +277,14 @@ def wachter_gradient_cf(sample,
             if verbose:
                 print(f"Wachter Gradient: Found counterfactual at iteration {iteration}")
             break
-    
+
     if verbose:
         print(f"Wachter Gradient: Best validity achieved: {best_validity:.4f}")
 
-    if not cfs:
+    if best_cf is None:
         if verbose:
             print("Wachter Gradient: No counterfactual candidates found")
         return None, None
-
-    # return best candidate by loss
-    cfs = sorted(cfs, key=lambda x: x[1])
-    best_cf = cfs[0][0]
-    best_pred = cfs[0][2]
     
     # Convert back to original sample format
     if len(sample.shape) == 1:
