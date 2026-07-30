@@ -6,6 +6,7 @@
 #   2. faultdetectiona/compare_faultdetectiona.py
 #   3. fruitflies/ablation_fruitflies.py
 #   4. fruitflies/compare_fruitflies.py
+#   5. combine_waveforms.py (side-by-side FaultDetectionA + FruitFlies waveforms)
 #
 # Usage:
 #   ./run_all_experiments.sh [options]
@@ -31,6 +32,7 @@
 #
 # Available experiment names: faultdetectiona_ablation faultdetectiona_compare
 #                              fruitflies_ablation fruitflies_compare
+#                              combined_waveforms
 
 set -euo pipefail
 
@@ -57,6 +59,7 @@ ALL_EXPERIMENTS=(
     faultdetectiona_compare
     fruitflies_ablation
     fruitflies_compare
+    combined_waveforms
 )
 
 # ---------------------------------------------------------------------------
@@ -174,7 +177,8 @@ mkdir -p \
     "$OUT_DIR/faultdetectiona_ablation" \
     "$OUT_DIR/faultdetectiona_compare" \
     "$OUT_DIR/fruitflies_ablation" \
-    "$OUT_DIR/fruitflies_compare"
+    "$OUT_DIR/fruitflies_compare" \
+    "$OUT_DIR/combined_compare"
 
 # ---------------------------------------------------------------------------
 # Run experiments
@@ -227,6 +231,24 @@ if [[ "${TO_RUN[fruitflies_compare]}" -eq 1 ]]; then
 else
     echo ""
     echo "[fruitflies_compare] SKIPPED"
+fi
+
+if [[ "${TO_RUN[combined_waveforms]}" -eq 1 ]]; then
+    FDA_WAVEFORMS="$OUT_DIR/faultdetectiona_compare/waveforms.png"
+    FF_WAVEFORMS="$OUT_DIR/fruitflies_compare/waveforms.png"
+    if [[ -f "$FDA_WAVEFORMS" && -f "$FF_WAVEFORMS" ]]; then
+        run_experiment combined_waveforms \
+            "$PYTHON" "$SCRIPT_DIR/combine_waveforms.py" \
+            --faultdetectiona-image "$FDA_WAVEFORMS" \
+            --fruitflies-image "$FF_WAVEFORMS" \
+            --out "$OUT_DIR/combined_compare/waveforms_side_by_side.png"
+    else
+        echo ""
+        echo "[combined_waveforms] SKIPPED (missing waveforms.png from faultdetectiona_compare and/or fruitflies_compare)"
+    fi
+else
+    echo ""
+    echo "[combined_waveforms] SKIPPED"
 fi
 
 # ---------------------------------------------------------------------------

@@ -33,7 +33,7 @@ import urllib.request
 from typing import Dict, List, Sequence, Tuple
 
 import matplotlib.pyplot as plt
-plt.rcParams.update({"font.size": 14})
+plt.rcParams.update({"font.size": 19})
 import numpy as np
 import umap
 import torch
@@ -139,10 +139,10 @@ def _get_ucr_uea_dataloader_resilient(dataset_name: str, split: str, batch_size:
 
 BASE_METHOD_CONFIGS = {
     "distance": {"method": "distance"},
-    "fingerprint": {"method": "fingerprint"},
+    # "fingerprint": {"method": "fingerprint"},  # disabled: identical to "distance"
     "variance": {"method": "variance"},
     "extremes": {"method": "extremes"},
-    "maxmin": {"method": "maxmin"},
+    # "maxmin": {"method": "maxmin"},  # disabled
     "coarse_to_fine": {"method": "coarse_to_fine"},
 }
 
@@ -211,23 +211,34 @@ def _build_nun_ablation_configs(multi_nun_counts: Sequence[int]) -> Dict[str, Di
     return nun_configs
 
 
+def _build_method_nun_ablation_configs(multi_nun_counts: Sequence[int]) -> Dict[str, Dict[str, object]]:
+    """Cross the NUN-count ablation with every IMF selection method (cycle switching)."""
+    configs: Dict[str, Dict[str, object]] = {}
+    for method in BASE_METHOD_CONFIGS:
+        configs[f"{method}_n1_cycle"] = {"method": method, "n_nuns": 1, "nun_switch": "cycle"}
+        for count in multi_nun_counts:
+            configs[f"{method}_n{count}_cycle"] = {"method": method, "n_nuns": count, "nun_switch": "cycle"}
+    return configs
+
+
 def _method_color(method: str) -> str:
-    if method == "distance":
-        return "darkorange"
-    if method == "fingerprint":
-        return "sienna"
-    if method == "variance":
-        return "crimson"
-    if method == "extremes":
-        return "purple"
-    if method == "maxmin":
-        return "teal"
-    if method == "coarse_to_fine":
-        return "black"
+    palette = {
+        "distance": "darkorange",
+        "fingerprint": "sienna",
+        "variance": "crimson",
+        "extremes": "purple",
+        "maxmin": "teal",
+        "coarse_to_fine": "black",
+    }
+    if method in palette:
+        return palette[method]
     if method.startswith("multi_nun_cycle"):
         return "goldenrod"
     if method.startswith("multi_nun_closest"):
         return "royalblue"
+    for base, color in palette.items():
+        if method.startswith(f"{base}_n") and method.endswith("_cycle"):
+            return color
     return "darkorange"
 
 
@@ -310,18 +321,20 @@ def _predict(model: nn.Module, sample: np.ndarray, device: torch.device) -> np.n
         return model(tensor).cpu().numpy().reshape(-1)
 
 
-def _select_correct_samples(model: nn.Module, dataset, max_samples: int, device: torch.device):
-    selected = []
+def _select_correct_samples(model: nn.Module, dataset, max_samples: int, device: torch.device, seed: int = 13):
+    """Randomly (but reproducibly, via `seed`) picks `max_samples` correctly classified samples."""
+    correct = []
     for idx in range(len(dataset)):
         sample, label = dataset[idx]
         pred = _predict(model, np.asarray(sample, dtype=np.float32), device)
         pred_class = int(np.argmax(pred))
         true_class = _to_class_index(label)
         if pred_class == true_class:
-            selected.append(idx)
-        if len(selected) >= max_samples:
-            break
-    return selected
+            correct.append(idx)
+    rng = np.random.RandomState(seed)
+    if len(correct) > max_samples:
+        correct = rng.choice(correct, size=max_samples, replace=False).tolist()
+    return sorted(correct)
 
 
 def _select_native_guide(sample: np.ndarray, dataset, guide_class: int | None) -> Tuple[np.ndarray, int]:
@@ -441,7 +454,7 @@ def _evaluate_method(
     start_time = time.time()
     method_config = method_configs[method]
     try:
-        cf, pred = imfact_cf(
+        cf, pred, n_iter = imfact_cf(
             sample,
             model,
             # Keep the guide anchored to the chosen destination class.
@@ -454,6 +467,7 @@ def _evaluate_method(
             n_nuns=method_config.get("n_nuns", 1),
             nun_switch=method_config.get("nun_switch", "cycle"),
             verbose=False,
+            return_n_iter=True,
         )
         elapsed = time.time() - start_time
     except Exception as exc:
@@ -481,6 +495,7 @@ def _evaluate_method(
     return {
         "method": method,
         "elapsed": elapsed,
+        "n_iter": n_iter,
         "pred_class": pred_class,
         "confidence": confidence,
         "l2_distance": _m["l2_distance"],
@@ -534,7 +549,7 @@ def _save_sample_line_plot(
     fig.suptitle(
         f"IMFACT Counterfactual Line Plots - {DATASET_NAME} | sample={sample_idx} | original={original_class} "
         f"({_class_name(original_class)}) | target={target_class} ({_class_name(target_class)})",
-        fontsize=13,
+        fontsize=18,
         fontweight="bold",
     )
 
@@ -542,7 +557,7 @@ def _save_sample_line_plot(
     axes[0].plot(x, sample_cf[0], color="steelblue", linewidth=1.4)
     axes[0].set_title(
         f"Original query sample - true: {true_class} ({_class_name(true_class)})",
-        fontsize=10,
+        fontsize=14,
     )
     axes[0].grid(True, alpha=0.25)
 
@@ -554,12 +569,12 @@ def _save_sample_line_plot(
             ax.plot(x, cf[0], color="darkorange", linewidth=1.3, label="counterfactual")
             ax.set_title(
                 f"{method} [valid] - pred: {outcome['pred_class']} ({_class_name(int(outcome['pred_class']))})",
-                fontsize=10,
+                fontsize=14,
             )
             ax.legend(loc="upper right", fontsize="small")
         else:
             ax.plot(x, sample_cf[0], color="steelblue", linestyle="--", linewidth=1.2, label="original")
-            ax.set_title(f"{method} [invalid]", fontsize=10)
+            ax.set_title(f"{method} [invalid]", fontsize=14)
         ax.grid(True, alpha=0.25)
 
     plt.tight_layout(rect=[0, 0.01, 1, 0.97])
@@ -591,7 +606,7 @@ def _save_sample_umap_plot(
     successful_outcomes = [outcome for outcome in outcomes if outcome.get("validity", 0.0) == 1.0]
     background_flat = background_cf.reshape(background_cf.shape[0], -1)
     n_neighbors = min(15, max(2, background_flat.shape[0] - 1))
-    reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, min_dist=0.15, metric="euclidean", random_state=42)
+    reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, min_dist=0.15, metric="euclidean", random_state=13)
     background_emb = reducer.fit_transform(background_flat)
 
     original_emb = reducer.transform(sample_cf.reshape(1, -1))[0]
@@ -629,7 +644,7 @@ def _save_sample_umap_plot(
 
     ax.set_title(
         f"UMAP projection - sample {sample_idx} | original {original_class} -> target {target_class}",
-        fontsize=12,
+        fontsize=16,
     )
     ax.set_xlabel("UMAP-1")
     ax.set_ylabel("UMAP-2")
@@ -650,45 +665,88 @@ def _summarize_results(methods: Sequence[str], results: Dict[str, List[Dict[str,
         successes = [row for row in method_rows if row.get("validity", 0.0) == 1.0]
         keane_rows = [row for row in method_rows if "keane_validity" in row]
         total = len(method_rows)
+        def _std(key, rows):
+            return float(np.std([row[key] for row in rows], ddof=1)) if len(rows) > 1 else 0.0
+
         validity_rate = 100.0 * float(np.mean([row.get("validity", 0.0) for row in method_rows])) if method_rows else 0.0
+        validity_rate_std = 100.0 * float(np.std([row.get("validity", 0.0) for row in method_rows], ddof=1)) if len(method_rows) > 1 else 0.0
         avg_conf = float(np.mean([row["confidence"] for row in successes])) if successes else 0.0
+        std_conf = _std("confidence", successes)
         avg_l2 = float(np.mean([row["l2_distance"] for row in successes])) if successes else 0.0
+        std_l2 = _std("l2_distance", successes)
         avg_zscore_l2 = float(np.mean([row["euclidean_dist_zscore"] for row in successes])) if successes else 0.0
+        std_zscore_l2 = _std("euclidean_dist_zscore", successes)
         avg_manhattan = float(np.mean([row["manhattan_distance"] for row in successes])) if successes else 0.0
+        std_manhattan = _std("manhattan_distance", successes)
         avg_pct_changed = float(np.mean([row["pct_changed"] for row in successes])) if successes else 0.0
+        std_pct_changed = _std("pct_changed", successes)
         avg_norm_distance = float(np.mean([row["normalized_distance"] for row in successes])) if successes else 0.0
+        std_norm_distance = _std("normalized_distance", successes)
         avg_l0_norm = float(np.mean([row["l0_norm"] for row in successes])) if successes else 0.0
+        std_l0_norm = _std("l0_norm", successes)
         avg_compactness = float(np.mean([row["compactness"] for row in successes])) if successes else 0.0
+        std_compactness = _std("compactness", successes)
         avg_temp_consistency = float(np.mean([row["temporal_consistency"] for row in successes])) if successes else 0.0
+        std_temp_consistency = _std("temporal_consistency", successes)
         avg_range_validity = float(np.mean([row["range_validity"] for row in successes])) if successes else 0.0
+        std_range_validity = _std("range_validity", successes)
         avg_autocorr = float(np.mean([row["autocorr_preservation"] for row in successes])) if successes else 0.0
+        std_autocorr = _std("autocorr_preservation", successes)
         avg_validity = float(np.mean([row["validity"] for row in successes])) if successes else 0.0
+        std_validity = _std("validity", successes)
         avg_sparsity = float(np.mean([row["sparsity"] for row in successes])) if successes else 0.0
+        std_sparsity = _std("sparsity", successes)
         avg_keane_validity = float(np.mean([row["keane_validity"] for row in keane_rows])) if keane_rows else 0.0
+        std_keane_validity = _std("keane_validity", keane_rows)
         avg_keane_proximity = float(np.mean([row["keane_proximity"] for row in keane_rows])) if keane_rows else 0.0
+        std_keane_proximity = _std("keane_proximity", keane_rows)
         avg_keane_compactness = float(np.mean([row["keane_compactness"] for row in keane_rows])) if keane_rows else 0.0
+        std_keane_compactness = _std("keane_compactness", keane_rows)
         avg_time = float(np.mean([row["elapsed"] for row in method_rows])) if method_rows else 0.0
+        std_time = _std("elapsed", method_rows)
+        avg_n_iter = float(np.mean([row["n_iter"] for row in successes])) if successes else 0.0
+        std_n_iter = _std("n_iter", successes)
         summary_rows.append(
             {
                 "method": method,
                 "validity_rate": validity_rate,
+                "validity_rate_std": validity_rate_std,
                 "avg_confidence": avg_conf,
+                "std_confidence": std_conf,
                 "avg_l2_distance": avg_l2,
+                "std_l2_distance": std_l2,
                 "avg_euclidean_dist_zscore": avg_zscore_l2,
+                "std_euclidean_dist_zscore": std_zscore_l2,
                 "avg_manhattan_distance": avg_manhattan,
+                "std_manhattan_distance": std_manhattan,
                 "avg_pct_changed": avg_pct_changed,
+                "std_pct_changed": std_pct_changed,
                 "avg_normalized_distance": avg_norm_distance,
+                "std_normalized_distance": std_norm_distance,
                 "avg_l0_norm": avg_l0_norm,
+                "std_l0_norm": std_l0_norm,
                 "avg_compactness": avg_compactness,
+                "std_compactness": std_compactness,
                 "avg_temporal_consistency": avg_temp_consistency,
+                "std_temporal_consistency": std_temp_consistency,
                 "avg_range_validity": avg_range_validity,
+                "std_range_validity": std_range_validity,
                 "avg_autocorr_preservation": avg_autocorr,
+                "std_autocorr_preservation": std_autocorr,
                 "avg_validity": avg_validity,
+                "std_validity": std_validity,
                 "avg_sparsity": avg_sparsity,
+                "std_sparsity": std_sparsity,
                 "avg_keane_validity": avg_keane_validity,
+                "std_keane_validity": std_keane_validity,
                 "avg_keane_proximity": avg_keane_proximity,
+                "std_keane_proximity": std_keane_proximity,
                 "avg_keane_compactness": avg_keane_compactness,
+                "std_keane_compactness": std_keane_compactness,
                 "avg_time": avg_time,
+                "std_time": std_time,
+                "avg_n_iter": avg_n_iter,
+                "std_n_iter": std_n_iter,
             }
         )
     return summary_rows
@@ -702,7 +760,7 @@ def _print_summary(title: str, methods: Sequence[str], summary_rows: Sequence[Di
     print(
         f"{'Method':<{method_col_width}} {'Validity':<10} {'Confidence':<12} {'L2 Distance':<12} {'ZL2 Dist':<10} {'L1 Dist':<10} "
         f"{'%Changed':<10} {'Norm Dist':<10} {'L0 Norm':<9} {'Cmpctns':<9} {'Temp Cons':<10} {'Range Val':<10} {'AutoCorr':<10} "
-        f"{'K.Valid':<8} {'K.Prox':<9} {'K.Comp':<9} {'Time (s)':<10}"
+        f"{'K.Valid':<8} {'K.Prox':<9} {'K.Comp':<9} {'Time (s)':<10} {'Iters':<8}"
     )
     print("-" * 80)
     for row in summary_rows:
@@ -712,7 +770,7 @@ def _print_summary(title: str, methods: Sequence[str], summary_rows: Sequence[Di
             f"{row['avg_pct_changed']:<10.2f} {row['avg_normalized_distance']:<10.4f} "
             f"{row['avg_l0_norm']:<9.1f} {row['avg_compactness']:<9.4f} "
             f"{row['avg_temporal_consistency']:<10.4f} {row['avg_range_validity']:<10.4f} {row['avg_autocorr_preservation']:<10.4f} "
-            f"{row['avg_keane_validity']:<8.4f} {row['avg_keane_proximity']:<9.4f} {row['avg_keane_compactness']:<9.4f} {row['avg_time']:<10.4f}"
+            f"{row['avg_keane_validity']:<8.4f} {row['avg_keane_proximity']:<9.4f} {row['avg_keane_compactness']:<9.4f} {row['avg_time']:<10.4f} {row['avg_n_iter']:<8.2f}"
         )
 
 
@@ -723,29 +781,86 @@ def _save_summary_csv(csv_path: str, summary_rows: Sequence[Dict[str, float | st
             fieldnames=[
                 "method",
                 "validity_rate",
+                "validity_rate_std",
                 "avg_confidence",
+                "std_confidence",
                 "avg_l2_distance",
+                "std_l2_distance",
                 "avg_euclidean_dist_zscore",
+                "std_euclidean_dist_zscore",
                 "avg_manhattan_distance",
+                "std_manhattan_distance",
                 "avg_pct_changed",
+                "std_pct_changed",
                 "avg_normalized_distance",
+                "std_normalized_distance",
                 "avg_l0_norm",
+                "std_l0_norm",
                 "avg_compactness",
+                "std_compactness",
                 "avg_temporal_consistency",
+                "std_temporal_consistency",
                 "avg_range_validity",
+                "std_range_validity",
                 "avg_autocorr_preservation",
+                "std_autocorr_preservation",
                 "avg_validity",
+                "std_validity",
                 "avg_sparsity",
+                "std_sparsity",
                 "avg_keane_validity",
+                "std_keane_validity",
                 "avg_keane_proximity",
+                "std_keane_proximity",
                 "avg_keane_compactness",
+                "std_keane_compactness",
                 "avg_time",
+                "std_time",
+                "avg_n_iter",
+                "std_n_iter",
             ],
         )
         writer.writeheader()
         for row in summary_rows:
             writer.writerow(row)
     print(f"\nSaved summary CSV to {csv_path}")
+
+
+def _paper_summary_rows(suite_name: str, summary_rows: Sequence[Dict[str, float | str]]) -> List[Dict[str, object]]:
+    """Subset of summary_rows matching the paper's reported metrics:
+    Validity, L2 Distance, Percentage Changed, Normalised Distance,
+    Range Validity, Autocorrelation Preservation, Confidence, Average Time.
+    """
+    return [
+        {
+            "dataset": DATASET_NAME,
+            "suite": suite_name,
+            "method": row["method"],
+            "validity": row["validity_rate"] / 100.0,
+            "l2_distance": row["avg_l2_distance"],
+            "pct_changed": row["avg_pct_changed"],
+            "normalized_distance": row["avg_normalized_distance"],
+            "range_validity": row["avg_range_validity"],
+            "autocorr_preservation": row["avg_autocorr_preservation"],
+            "confidence": row["avg_confidence"],
+            "avg_time": row["avg_time"],
+            "avg_n_iter": row["avg_n_iter"],
+        }
+        for row in summary_rows
+    ]
+
+
+def _save_paper_summary_csv(csv_path: str, paper_rows: Sequence[Dict[str, object]]):
+    fieldnames = [
+        "dataset", "suite", "method", "validity", "l2_distance", "pct_changed", "normalized_distance",
+        "range_validity", "autocorr_preservation", "confidence", "avg_time", "avg_n_iter",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in paper_rows:
+            writer.writerow(row)
+    print(f"Saved paper summary CSV: {csv_path}")
 
 
 def _save_summary_plot(plot_path: str, summary_rows: Sequence[Dict[str, float | str]], title: str):
@@ -766,10 +881,11 @@ def _save_summary_plot(plot_path: str, summary_rows: Sequence[Dict[str, float | 
     validities = [row["avg_validity"] for row in summary_rows]
     sparsities = [row["avg_sparsity"] for row in summary_rows]
     avg_times = [row["avg_time"] for row in summary_rows]
+    avg_n_iters = [row["avg_n_iter"] for row in summary_rows]
 
     fig_height = max(28, 0.85 * len(names) + 24)
     fig, axes = plt.subplots(5, 4, figsize=(22, fig_height))
-    fig.suptitle(title, fontsize=14, fontweight="bold")
+    fig.suptitle(title, fontsize=19, fontweight="bold")
 
     axes[0, 0].barh(names, validity_rates, color="steelblue")
     axes[0, 0].set_title("Validity Rate (%)")
@@ -853,7 +969,12 @@ def _save_summary_plot(plot_path: str, summary_rows: Sequence[Dict[str, float | 
     axes[3, 3].set_xlim(left=0, right=1.05)
     _mark_best_barh(axes[3, 3], compactnesses, higher_is_better=True)
 
-    for ax in axes[4, :]:
+    axes[4, 0].barh(names, avg_n_iters, color="darkslateblue")
+    axes[4, 0].set_title("Average Iterations (lower better)")
+    axes[4, 0].set_xlim(left=0)
+    _mark_best_barh(axes[4, 0], avg_n_iters, higher_is_better=False)
+
+    for ax in axes[4, 1:]:
         ax.axis("off")
 
     for ax in axes.flat:
@@ -869,7 +990,7 @@ def _save_summary_plot(plot_path: str, summary_rows: Sequence[Dict[str, float | 
         f"{plot_path[:-4]}_canonical.png" if plot_path.endswith(".png") else f"{plot_path}_canonical.png"
     )
     fig2, axes2 = plt.subplots(1, 4, figsize=(22, max(5, 0.4 * len(names) + 3)))
-    fig2.suptitle(f"{title} — Validity / Proximity / Sparsity / Plausibility", fontsize=14, fontweight="bold")
+    fig2.suptitle(f"{title} — Validity / Proximity / Sparsity / Plausibility", fontsize=19, fontweight="bold")
 
     axes2[0].barh(names, validity_rates, color="steelblue")
     axes2[0].set_title("Validity ↑")
@@ -931,11 +1052,14 @@ def main():
             "FruitFlies has 17k test samples which OOMs; default 1000 avoids this."
         ),
     )
+    parser.add_argument("--seed", type=int, default=13,
+                        help="Random seed for reproducible sample selection (default: 13).")
     args = parser.parse_args()
 
     multi_nun_counts = _parse_multi_nun_counts(args.multi_nun_counts)
     method_ablation_configs = _build_method_ablation_configs()
     nun_ablation_configs = _build_nun_ablation_configs(multi_nun_counts)
+    method_nun_ablation_configs = _build_method_nun_ablation_configs(multi_nun_counts)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -983,7 +1107,7 @@ def main():
     model.eval()
 
     print("\nSelecting correctly classified test samples...")
-    selected_indices = _select_correct_samples(model, dataset_test, args.max_samples, device)
+    selected_indices = _select_correct_samples(model, dataset_test, args.max_samples, device, seed=args.seed)
     print(f"Selected {len(selected_indices)} correctly classified samples")
     if not selected_indices:
         raise RuntimeError("No correctly classified samples were found for ablation.")
@@ -998,6 +1122,7 @@ def main():
     suite_configs = {
         "method_ablation": method_ablation_configs,
         "nun_ablation": nun_ablation_configs,
+        "method_nun_ablation": method_nun_ablation_configs,
     }
     suite_results: Dict[str, Dict[str, List[Dict[str, object]]]] = {
         suite_name: {method: [] for method in configs.keys()} for suite_name, configs in suite_configs.items()
@@ -1054,6 +1179,7 @@ def main():
                     target_class,
                 )
 
+    paper_rows: List[Dict[str, object]] = []
     for suite_name, configs in suite_configs.items():
         methods = list(configs.keys())
         summary_rows = _summarize_results(methods, suite_results[suite_name])
@@ -1061,7 +1187,10 @@ def main():
         csv_path = f"{output_prefix}_{suite_name}.csv"
         plot_path = f"{output_prefix}_{suite_name}.png"
         _save_summary_csv(csv_path, summary_rows)
+        paper_rows.extend(_paper_summary_rows(suite_name, summary_rows))
         _save_summary_plot(plot_path, summary_rows, f"IMFACT {suite_name.replace('_', ' ').title()} on {DATASET_NAME}")
+
+    _save_paper_summary_csv(f"{output_prefix}_results_summary_paper.csv", paper_rows)
 
 
 if __name__ == "__main__":

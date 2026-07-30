@@ -207,6 +207,58 @@ def _class_variance(series_list: list) -> float:
     return float(np.mean((psds - mean_psd) ** 2))
 
 
+def _per_imf_variance_weights(
+    ts: np.ndarray,
+    src_mask: np.ndarray,
+    tgt_mask: np.ndarray,
+    C: int,
+    n_imfs_per_c: list,
+    decomposer: str,
+    max_imfs: int,
+) -> list:
+    """Per-IMF-index class variance difference (source class vs target class).
+
+    For each IMF index k, decomposes every source-class and target-class
+    series into IMFs and compares the class-level PSD variance (see
+    ``_class_variance``) of their k-th IMF, then normalises across IMFs.
+    Mirrors ``imfact_old.py``'s ``get_imf_level_variance_distances``.
+    """
+    src_idx = np.where(src_mask)[0]
+    tgt_idx = np.where(tgt_mask)[0]
+    step_w = []
+    for c in range(C):
+        src_imfs_c = [_decompose(ts[i, c], decomposer, max_imfs) for i in src_idx]
+        tgt_imfs_c = [_decompose(ts[i, c], decomposer, max_imfs) for i in tgt_idx]
+        v = np.zeros(n_imfs_per_c[c])
+        for k in range(n_imfs_per_c[c]):
+            src_series_k = [imfs[k] for imfs in src_imfs_c if k < len(imfs)]
+            tgt_series_k = [imfs[k] for imfs in tgt_imfs_c if k < len(imfs)]
+            v[k] = abs(_class_variance(src_series_k) - _class_variance(tgt_series_k))
+        mx = float(np.max(v)) if v.size else 0.0
+        step_w.append(v / (mx + 1e-12) if mx > 0.0 else v)
+    return step_w
+
+
+def _variance_effective_step(step_weights: list, base_step: float, max_iter: int) -> float:
+    """Boost the interpolation step for the ``"variance"`` method.
+
+    Its per-IMF weights are a fixed population statistic (computed once,
+    unlike ``"distance"``/``"extremes"``/``"coarse_to_fine"`` which
+    recompute per iteration), and can be far smaller than 1.0. At the base
+    step size a weakly-weighted but non-zero IMF may need many more than
+    ``max_iter`` iterations to fully swap in, so the step is scaled up to
+    let the smallest non-zero weight still saturate within ``max_iter``.
+    """
+    if not step_weights or max_iter <= 0:
+        return base_step
+    all_w = np.concatenate([w for w in step_weights if w.size])
+    positive = all_w[all_w > 1e-9]
+    if positive.size == 0:
+        return base_step
+    min_w = float(np.min(positive))
+    return max(base_step, 1.0 / (min_w * max_iter))
+
+
 def _minmax_norm(x: np.ndarray) -> np.ndarray:
     """Safe min-max normalisation for 1-D arrays."""
     x = np.asarray(x, dtype=np.float64)
@@ -340,9 +392,9 @@ def _select_native_guides(
 #   4. Iteratively step weights towards the native guide, scaling each IMF's
 #      step by its PSD distance (method="distance"), class-level PSD variance
 #      difference (method="variance"), the strongest/weakest IMF PSD distances
-#      (method="extremes"), IMF amplitude range ordering (method="maxmin"),
-#      or a coarse-to-fine schedule that
+#      (method="extremes"), or a coarse-to-fine schedule that
 #      unlocks one more IMF every few iterations.
+#      ("fingerprint" and "maxmin" are disabled — see below.)
 #   5. Reconstruct the signal and query the model; stop on a class flip.
 ####
 def imfact_cf(
@@ -360,6 +412,7 @@ def imfact_cf(
     decomposer: str = "sift_imfs",
     max_samples: int | None = None,
     verbose: bool = False,
+    return_n_iter: bool = False,
     *args,
     **kwargs,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -385,12 +438,12 @@ def imfact_cf(
         Training set as a sequence of ``(x, y)`` pairs.
     method:
         IMF weighting strategy: ``"distance"`` (JSD between interpolated and
-        target IMF PSDs), ``"fingerprint"`` (legacy Welch-fingerprint IMF
-        distances as in ``imfact_old.py``), ``"variance"`` (class-level PSD
+        target IMF PSDs), ``"variance"`` (class-level PSD
         variance difference), ``"extremes"`` (step only the most and least
-        distant IMFs between query and native guide in PSD space), ``"maxmin"``
-        (prioritise IMFs with larger amplitude range, i.e. max-min), or
+        distant IMFs between query and native guide in PSD space), or
         ``"coarse_to_fine"`` (iteratively unlock IMFs from coarse to fine).
+        (``"fingerprint"`` and ``"maxmin"`` are currently disabled — see
+        the validation check and ``_advance_weights`` below.)
     step:
         Base interpolation step per iteration.
     max_iter:
@@ -413,6 +466,10 @@ def imfact_cf(
         ``emd.sift.sift`` from the *emd-signal* package (must be installed).
     verbose:
         Print per-iteration diagnostics when ``True``.
+    return_n_iter:
+        When ``True``, also return the number of interpolation iterations
+        actually used (i.e. when the stopping criterion was met, or
+        ``max_iter`` if it never was).
 
     Returns
     -------
@@ -420,9 +477,14 @@ def imfact_cf(
         In the same shape / orientation as *sample*.
     scores : np.ndarray, shape (n_classes,)
         Model output scores for the counterfactual.
+    n_iter : int
+        Only returned when ``return_n_iter=True``.
     """
-    if method not in ("distance", "fingerprint", "variance", "extremes", "maxmin", "coarse_to_fine"):
-        raise ValueError("method must be 'distance', 'fingerprint', 'variance', 'extremes', 'maxmin', or 'coarse_to_fine'")
+    # "fingerprint" and "maxmin" are disabled: "fingerprint" is numerically
+    # identical to "distance" (see _fingerprint_step_weights), and "maxmin"
+    # is disabled alongside it for now.
+    if method not in ("distance", "variance", "extremes", "coarse_to_fine"):  # "fingerprint", "maxmin"
+        raise ValueError("method must be 'distance', 'variance', 'extremes', or 'coarse_to_fine'")  # 'fingerprint', 'maxmin'
     if decomposer not in ("sift_imfs", "emd"):
         raise ValueError("decomposer must be 'sift_imfs' or 'emd'")
     if nun_switch not in ("cycle", "closest_psd"):
@@ -567,22 +629,9 @@ def imfact_cf(
 
     def _variance_step_weights() -> list[np.ndarray]:
         """Normalised per-IMF class variance difference (source vs target class)."""
-        src_series = [ts[i, 0] for i in range(N) if labels[i] == label_orig]
-        if target_class is None:
-            target_mask = labels != label_orig
-        else:
-            target_mask = labels == int(target_class)
-        tgt_series = [ts[i, 0] for i in range(N) if target_mask[i]]
-        step_w = []
-        for c in range(C):
-            v = np.zeros(n_imfs_per_c[c])
-            for k in range(n_imfs_per_c[c]):
-                var_src = _class_variance(src_series)
-                var_tgt = _class_variance(tgt_series)
-                v[k] = abs(var_src - var_tgt)
-            mx = np.max(v)
-            step_w.append(v / (mx + 1e-12))
-        return step_w
+        src_mask = labels == label_orig
+        target_mask = labels != label_orig if target_class is None else labels == int(target_class)
+        return _per_imf_variance_weights(ts, src_mask, target_mask, C, n_imfs_per_c, decomposer, max_imfs)
 
     def _extreme_step_weights() -> list[np.ndarray]:
         """Keep only the strongest and weakest IMF distances for each channel."""
@@ -657,28 +706,36 @@ def imfact_cf(
 
         return step_w
 
-    # Pre-compute variance weights once (independent of current weights)
+    # Pre-compute variance weights once (independent of current weights), and
+    # boost the step for "variance" since its weights are a fixed population
+    # statistic that can be much smaller than the per-iteration distances
+    # used by the other methods (see _variance_effective_step).
     precomputed_var_weights = _variance_step_weights() if method == "variance" else None
+    effective_step = (
+        _variance_effective_step(precomputed_var_weights, step, max_iter)
+        if method == "variance"
+        else step
+    )
 
     def _advance_weights(iter_idx: int):
         _set_active_guide(iter_idx, cf)
         if method == "distance":
             sw = _distance_step_weights()
-        elif method == "fingerprint":
-            sw = _fingerprint_step_weights()
+        # elif method == "fingerprint":
+        #     sw = _fingerprint_step_weights()
         elif method == "variance":
             sw = precomputed_var_weights
         elif method == "extremes":
             sw = _extreme_step_weights()
-        elif method == "maxmin":
-            sw = _maxmin_step_weights()
+        # elif method == "maxmin":
+        #     sw = _maxmin_step_weights()
         elif method == "coarse_to_fine":
             sw = _coarse_to_fine_step_weights(iter_idx)
         else:
             raise RuntimeError(f"Unhandled method: {method}")
         for c in range(C):
             for k, wk in enumerate(weights[c]):
-                delta = step * float(sw[c][k])
+                delta = effective_step * float(sw[c][k])
                 wk["w_target"] = min(1.0, wk["w_target"] + delta)
                 wk["w_source"] = max(0.0, wk["w_source"] - delta)
 
@@ -688,6 +745,7 @@ def imfact_cf(
 
     target_stop_class = None if target_class is None else int(target_class)
 
+    n_iter = 0
     for i in range(max_iter):
         _advance_weights(i)
         candidate = _reconstruct()
@@ -703,6 +761,7 @@ def imfact_cf(
 
         cf = candidate
         scores_cf = scores_cand
+        n_iter = i + 1
 
         # Untargeted mode: stop on first class flip.
         # Targeted mode: stop only when the selected target class is reached.
@@ -713,6 +772,8 @@ def imfact_cf(
             if label_cand == target_stop_class:
                 break
 
+    if return_n_iter:
+        return revert_orientation(cf, ori), scores_cf, n_iter
     return revert_orientation(cf, ori), scores_cf
 
 
@@ -767,8 +828,8 @@ def trace_imfact_variant_path(
         Training set as a sequence of ``(x, y)`` pairs used to find the NUN.
     method:
         IMF weighting strategy — same options as :func:`imfact_cf`:
-        ``"distance"``, ``"fingerprint"``, ``"variance"``, ``"extremes"``,
-        ``"maxmin"``, or ``"coarse_to_fine"``.
+        ``"distance"``, ``"variance"``, ``"extremes"``, or ``"coarse_to_fine"``.
+        (``"fingerprint"`` and ``"maxmin"`` are currently disabled.)
     step:
         Base interpolation step per iteration.
     max_iter:
@@ -802,9 +863,12 @@ def trace_imfact_variant_path(
     ``original_class`` : int
     ``target_class`` : int | None
     """
-    if method not in ("distance", "fingerprint", "variance", "extremes", "maxmin", "coarse_to_fine"):
+    # "fingerprint" and "maxmin" are disabled: "fingerprint" is numerically
+    # identical to "distance" (see _fingerprint_step_weights), and "maxmin"
+    # is disabled alongside it for now.
+    if method not in ("distance", "variance", "extremes", "coarse_to_fine"):  # "fingerprint", "maxmin"
         raise ValueError(
-            "method must be 'distance', 'fingerprint', 'variance', 'extremes', 'maxmin', or 'coarse_to_fine'"
+            "method must be 'distance', 'variance', 'extremes', or 'coarse_to_fine'"  # 'fingerprint', 'maxmin'
         )
     if decomposer not in ("sift_imfs", "emd"):
         raise ValueError("decomposer must be 'sift_imfs' or 'emd'")
@@ -912,18 +976,9 @@ def trace_imfact_variant_path(
         return step_w
 
     def _variance_step_weights() -> list[np.ndarray]:
-        src_series = [ts[i, 0] for i in range(N) if labels[i] == label_orig]
-        if target_class is None:
-            tgt_series = [ts[i, 0] for i in range(N) if labels[i] != label_orig]
-        else:
-            tgt_series = [ts[i, 0] for i in range(N) if labels[i] == int(target_class)]
-        base = abs(_class_variance(src_series) - _class_variance(tgt_series))
-        step_w = []
-        for c in range(C):
-            w = np.full(n_imfs_per_c[c], base)
-            mx = np.max(w)
-            step_w.append(w / (mx + 1e-12) if mx > 0 else w)
-        return step_w
+        src_mask = labels == label_orig
+        tgt_mask = labels != label_orig if target_class is None else labels == int(target_class)
+        return _per_imf_variance_weights(ts, src_mask, tgt_mask, C, n_imfs_per_c, decomposer, max_imfs)
 
     def _extreme_step_weights() -> list[np.ndarray]:
         step_w = []
@@ -973,25 +1028,30 @@ def trace_imfact_variant_path(
         return step_w
 
     precomputed_var_weights = _variance_step_weights() if method == "variance" else None
+    effective_step = (
+        _variance_effective_step(precomputed_var_weights, step, max_iter)
+        if method == "variance"
+        else step
+    )
 
     def _advance_weights(iter_idx: int):
         if method == "distance":
             sw = _distance_step_weights()
-        elif method == "fingerprint":
-            sw = _fingerprint_step_weights()
+        # elif method == "fingerprint":
+        #     sw = _fingerprint_step_weights()
         elif method == "variance":
             sw = precomputed_var_weights
         elif method == "extremes":
             sw = _extreme_step_weights()
-        elif method == "maxmin":
-            sw = _maxmin_step_weights()
+        # elif method == "maxmin":
+        #     sw = _maxmin_step_weights()
         elif method == "coarse_to_fine":
             sw = _coarse_to_fine_step_weights(iter_idx)
         else:
             raise RuntimeError(f"Unhandled method: {method}")
         for c in range(C):
             for k, wk in enumerate(weights[c]):
-                delta = step * float(sw[c][k])
+                delta = effective_step * float(sw[c][k])
                 wk["w_target"] = min(1.0, wk["w_target"] + delta)
                 wk["w_source"] = max(0.0, wk["w_source"] - delta)
 

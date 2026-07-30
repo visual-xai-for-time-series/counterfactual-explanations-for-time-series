@@ -62,7 +62,7 @@ from cfts.cf_wachter.wachter import wachter_gradient_cf
 from cfts.metrics import evaluate_counterfactual
 
 plt.style.use("seaborn-v0_8-darkgrid")
-plt.rcParams.update({"font.size": 14})
+plt.rcParams.update({"font.size": 19})
 
 METHOD_COLORS = {
     "imfact_default": "#e63946",
@@ -220,16 +220,18 @@ def _model_wrapper(model, device):
     return wrapped
 
 
-def _select_correct_indices(model, dataset, max_count: int, device) -> list[int]:
-    selected = []
+def _select_correct_indices(model, dataset, max_count: int, device, seed: int = 13) -> list[int]:
+    """Randomly (but reproducibly, via `seed`) picks `max_count` correctly classified samples."""
+    correct = []
     for idx in range(len(dataset)):
         sample, label = dataset[idx]
         scores = _predict(model, np.asarray(sample, dtype=np.float32), device)
         if int(np.argmax(scores)) == _to_class_index(label):
-            selected.append(idx)
-        if len(selected) >= max_count:
-            break
-    return selected
+            correct.append(idx)
+    rng = np.random.RandomState(seed)
+    if len(correct) > max_count:
+        correct = rng.choice(correct, size=max_count, replace=False).tolist()
+    return sorted(correct)
 
 
 def _infer_target_class(scores: np.ndarray) -> int:
@@ -265,6 +267,7 @@ def _run_imfact(sample, dataset, model, target_class):
         method="distance", target_class=target_class,
         step=0.05, max_iter=200, max_imfs=10,
         n_nuns=1, nun_switch="cycle", verbose=False,
+        return_n_iter=True,
     )
 
 
@@ -342,7 +345,7 @@ def evaluate(
                 "sparsity": np.nan, "range_validity": np.nan, "autocorr": np.nan,
                 "temporal_consistency": np.nan, "confidence": np.nan, "validity": 0.0,
                 "keane_validity": np.nan, "keane_proximity": np.nan, "keane_compactness": np.nan,
-                "elapsed": np.nan,
+                "elapsed": np.nan, "n_iter": np.nan,
                 "error": None,
             }
 
@@ -351,7 +354,11 @@ def evaluate(
                 # IMFACT needs full dataset_test for NUN search; all other methods use the
                 # capped search_dataset to avoid OOM (native_guide, wachter, glacier, mascots).
                 ds = dataset_test if method_name == "imfact_default" else (search_dataset or dataset_test)
-                cf, pred_cf_scores = RUNNERS[method_name](sample, ds, model, target_class)
+                if method_name == "imfact_default":
+                    cf, pred_cf_scores, n_iter = RUNNERS[method_name](sample, ds, model, target_class)
+                else:
+                    cf, pred_cf_scores = RUNNERS[method_name](sample, ds, model, target_class)
+                    n_iter = np.nan
             except Exception as exc:
                 elapsed = time.time() - start_time
                 records.append({**base, "elapsed": elapsed, "error": f"{type(exc).__name__}: {exc}"})
@@ -380,6 +387,7 @@ def evaluate(
             records.append({
                 **base,
                 "elapsed": elapsed,
+                "n_iter": n_iter,
                 "pred_cf": pred_cf,
                 "l2_norm": _m["l2_distance"],
                 "normalized_distance": _m["normalized_distance"],
@@ -408,28 +416,63 @@ def build_summary(results_df: pd.DataFrame) -> pd.DataFrame:
         results_df.groupby("method", dropna=False)
         .agg(n_total=("sample_idx", "count"),
              validity_rate=("validity", "mean"),
-             elapsed_mean=("elapsed", "mean"))
+             validity_rate_std=("validity", "std"),
+             elapsed_mean=("elapsed", "mean"),
+             elapsed_std=("elapsed", "std"))
         .reset_index()
     )
     agg_suc = (
         successful_df.groupby("method", dropna=False)
         .agg(
             l2_norm_mean=("l2_norm", "mean"),
+            l2_norm_std=("l2_norm", "std"),
             normalized_distance_mean=("normalized_distance", "mean"),
+            normalized_distance_std=("normalized_distance", "std"),
             sparsity_mean=("sparsity", "mean"),
+            sparsity_std=("sparsity", "std"),
             range_validity_mean=("range_validity", "mean"),
+            range_validity_std=("range_validity", "std"),
             autocorr_mean=("autocorr", "mean"),
+            autocorr_std=("autocorr", "std"),
             temporal_consistency_mean=("temporal_consistency", "mean"),
+            temporal_consistency_std=("temporal_consistency", "std"),
             confidence_mean=("confidence", "mean"),
+            confidence_std=("confidence", "std"),
             keane_validity_mean=("keane_validity", "mean"),
+            keane_validity_std=("keane_validity", "std"),
             keane_proximity_mean=("keane_proximity", "mean"),
+            keane_proximity_std=("keane_proximity", "std"),
             keane_compactness_mean=("keane_compactness", "mean"),
+            keane_compactness_std=("keane_compactness", "std"),
+            n_iter_mean=("n_iter", "mean"),
+            n_iter_std=("n_iter", "std"),
         )
         .reset_index()
     )
     summary = agg_all.merge(agg_suc, on="method", how="left")
     summary["validity_rate"] = summary["validity_rate"].fillna(0.0)
     return summary.sort_values("method").reset_index(drop=True)
+
+
+def build_paper_summary(summary_df: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
+    """Subset of build_summary matching the paper's reported metrics:
+    Validity, L2 Distance, Percentage Changed, Normalised Distance,
+    Range Validity, Autocorrelation Preservation, Confidence, Average Time,
+    and (for IMFACT only) average iterations needed.
+    """
+    return pd.DataFrame({
+        "dataset": dataset_name,
+        "method": summary_df["method"],
+        "validity": summary_df["validity_rate"],
+        "l2_distance": summary_df["l2_norm_mean"],
+        "pct_changed": (1.0 - summary_df["sparsity_mean"]) * 100.0,
+        "normalized_distance": summary_df["normalized_distance_mean"],
+        "range_validity": summary_df["range_validity_mean"],
+        "autocorr_preservation": summary_df["autocorr_mean"],
+        "confidence": summary_df["confidence_mean"],
+        "avg_time": summary_df["elapsed_mean"],
+        "avg_n_iter": summary_df["n_iter_mean"],
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +514,7 @@ def plot_bar_metrics(summary_df: pd.DataFrame, dataset_name: str, out_path: str)
     axes[4, 1].axis("off")
     axes[4, 2].axis("off")
 
-    fig.suptitle(f"{dataset_name} — IMFACT vs Native Guide vs Wachter", fontsize=13, y=1.01)
+    fig.suptitle(f"{dataset_name} — IMFACT vs Native Guide vs Wachter", fontsize=18, y=1.01)
     plt.tight_layout()
     plt.savefig(out_path, dpi=120, bbox_inches="tight")
     plt.close()
@@ -481,7 +524,7 @@ def plot_bar_metrics(summary_df: pd.DataFrame, dataset_name: str, out_path: str)
     # (lower better), sparsity (higher better), plausibility (higher better).
     canonical_path = f"{out_path[:-4]}_canonical.png" if out_path.endswith(".png") else f"{out_path}_canonical.png"
     fig2, axes2 = plt.subplots(1, 4, figsize=(20, 4.5))
-    fig2.suptitle(f"{dataset_name} — Validity / Proximity / Sparsity / Plausibility", fontsize=13, y=1.05)
+    fig2.suptitle(f"{dataset_name} — Validity / Proximity / Sparsity / Plausibility", fontsize=18, y=1.05)
 
     axes2[0].bar(methods, plot_df["validity_rate"], color=colors)
     axes2[0].set_title("Validity ↑")
@@ -522,7 +565,7 @@ def plot_umap(
     out_path: str,
     n_background: int = 512,
 ) -> None:
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(13)
     bg_idx = sorted(
         rng.choice(len(dataset_test), size=min(n_background, len(dataset_test)), replace=False).tolist()
     )
@@ -545,7 +588,7 @@ def plot_umap(
     reducer = umap.UMAP(
         n_components=2,
         n_neighbors=min(15, max(2, len(background_data) - 1)),
-        min_dist=0.15, metric="euclidean", random_state=42, n_jobs=1,
+        min_dist=0.15, metric="euclidean", random_state=13, n_jobs=1,
     )
     background_emb = reducer.fit_transform(background_data)
     sample_emb = reducer.transform(rep_sample)[0]
@@ -586,17 +629,18 @@ def plot_umap(
         )
         ax.scatter(cf_emb[0], cf_emb[1], s=150, c=color, marker="X",
                    edgecolors="white", linewidths=1.0,
-                   label=f"{method_name} (pred={pred_cf}, {'OK' if worked else 'FAIL'})")
+                   label=method_name)
         ax.plot([sample_emb[0], cf_emb[0]], [sample_emb[1], cf_emb[1]], color=color, alpha=0.5)
 
     ax.text(0.02, 0.98, "\n".join(annotation_lines), transform=ax.transAxes,
-            va="top", ha="left", fontsize=8,
+            va="top", ha="left", fontsize=11,
             bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "alpha": 0.8, "edgecolor": "none"})
     ax.set_title(f"UMAP projection — {dataset_name} sample {rep_idx}")
     ax.set_xlabel("UMAP-1")
     ax.set_ylabel("UMAP-2")
     ax.grid(True, alpha=0.25)
-    ax.legend(loc="best", fontsize=8, ncols=2)
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=8,
+              markerscale=0.7, handletextpad=0.4, labelspacing=0.3, borderaxespad=0.0)
     plt.tight_layout()
     plt.savefig(out_path, dpi=120, bbox_inches="tight")
     plt.close()
@@ -645,7 +689,7 @@ def plot_waveforms(
         fig.suptitle(
             f"Line Plot — {dataset_name} {sample_idx} | true={true_label} | pred={initial_pred} | "
             + " | ".join(status_parts),
-            fontsize=11, y=0.995,
+            fontsize=15, y=0.995,
         )
 
         axes[0].plot(x, label="original", color="black", linewidth=1.8, alpha=0.75)
@@ -696,7 +740,8 @@ def parse_args():
                         help="Number of correctly classified test samples to evaluate (default: 50)")
     parser.add_argument("--out-dir", type=str, default=None,
                         help="Output directory (default: results/<dataset_lower>_compare/)")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=13,
+                        help="Random seed for reproducible sample selection (default: 13)")
     parser.add_argument("--exclude-wachter", action="store_true",
                         help="Exclude Wachter from the comparison (recommended for long series > 1000 pts)")
     parser.add_argument("--exclude-glacier", action="store_true",
@@ -775,7 +820,7 @@ def main():
         [np.asarray(dataset_train[i][0], dtype=np.float32) for i in range(reference_count)], axis=0
     )
 
-    selected_indices = _select_correct_indices(model, dataset_test, args.n_samples, device)
+    selected_indices = _select_correct_indices(model, dataset_test, args.n_samples, device, seed=args.seed)
     print(f"Evaluating {len(selected_indices)} correctly classified samples ...")
 
     search_dataset = _SubsetView(dataset_test, args.max_search_samples)
@@ -793,6 +838,7 @@ def main():
 
     results_df.to_csv(os.path.join(out_dir, "results.csv"), index=False)
     summary_df.to_csv(os.path.join(out_dir, "summary.csv"), index=False)
+    build_paper_summary(summary_df, dataset_name).to_csv(os.path.join(out_dir, "results_summary_paper.csv"), index=False)
     print(f"\nSaved CSVs to {out_dir}")
 
     plot_bar_metrics(summary_df, dataset_name, os.path.join(out_dir, "bar_metrics.png"))

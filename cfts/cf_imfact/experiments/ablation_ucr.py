@@ -24,7 +24,7 @@ import urllib.request
 from typing import Dict, List, Sequence, Tuple
 
 import matplotlib.pyplot as plt
-plt.rcParams.update({"font.size": 14})
+plt.rcParams.update({"font.size": 19})
 import numpy as np
 import umap
 import torch
@@ -64,10 +64,10 @@ from cfts.metrics import evaluate_counterfactual
 
 BASE_METHOD_CONFIGS: Dict[str, Dict[str, object]] = {
     "distance": {"method": "distance"},
-    "fingerprint": {"method": "fingerprint"},
+    # "fingerprint": {"method": "fingerprint"},  # disabled: identical to "distance"
     "variance": {"method": "variance"},
     "extremes": {"method": "extremes"},
-    "maxmin": {"method": "maxmin"},
+    # "maxmin": {"method": "maxmin"},  # disabled
     "coarse_to_fine": {"method": "coarse_to_fine"},
 }
 
@@ -139,6 +139,16 @@ def _build_nun_ablation_configs(multi_nun_counts: Sequence[int]) -> Dict[str, Di
             "method": "distance", "n_nuns": count, "nun_switch": "closest_psd",
         }
     return nun_configs
+
+
+def _build_method_nun_ablation_configs(multi_nun_counts: Sequence[int]) -> Dict[str, Dict[str, object]]:
+    """Cross the NUN-count ablation with every IMF selection method (cycle switching)."""
+    configs: Dict[str, Dict[str, object]] = {}
+    for method in BASE_METHOD_CONFIGS:
+        configs[f"{method}_n1_cycle"] = {"method": method, "n_nuns": 1, "nun_switch": "cycle"}
+        for count in multi_nun_counts:
+            configs[f"{method}_n{count}_cycle"] = {"method": method, "n_nuns": count, "nun_switch": "cycle"}
+    return configs
 
 
 def _parse_multi_nun_counts(raw_counts: str) -> List[int]:
@@ -256,16 +266,18 @@ def _format_prediction(prediction) -> Tuple[int, float]:
     return int(np.argmax(pred_np)), float(np.max(pred_np))
 
 
-def _select_correct_samples(model: nn.Module, dataset, max_samples: int, device) -> List[int]:
-    selected = []
+def _select_correct_samples(model: nn.Module, dataset, max_samples: int, device, seed: int = 13) -> List[int]:
+    """Randomly (but reproducibly, via `seed`) picks `max_samples` correctly classified samples."""
+    correct = []
     for idx in range(len(dataset)):
         sample, label = dataset[idx]
         pred = _predict(model, np.asarray(sample, dtype=np.float32), device)
         if int(np.argmax(pred)) == _to_class_index(label):
-            selected.append(idx)
-        if len(selected) >= max_samples:
-            break
-    return selected
+            correct.append(idx)
+    rng = np.random.RandomState(seed)
+    if len(correct) > max_samples:
+        correct = rng.choice(correct, size=max_samples, replace=False).tolist()
+    return sorted(correct)
 
 
 def _select_native_guide(sample: np.ndarray, dataset, guide_class: int | None) -> Tuple[np.ndarray, int]:
@@ -308,7 +320,7 @@ def _evaluate_method(
     start_time = time.time()
     method_config = method_configs[method]
     try:
-        cf, pred = imfact_cf(
+        cf, pred, n_iter = imfact_cf(
             sample, model,
             target_class=target_class,
             dataset=dataset,
@@ -317,6 +329,7 @@ def _evaluate_method(
             n_nuns=method_config.get("n_nuns", 1),
             nun_switch=method_config.get("nun_switch", "cycle"),
             verbose=False,
+            return_n_iter=True,
         )
         elapsed = time.time() - start_time
     except Exception as exc:
@@ -342,7 +355,7 @@ def _evaluate_method(
     )
 
     return {
-        "method": method, "elapsed": elapsed,
+        "method": method, "elapsed": elapsed, "n_iter": n_iter,
         "pred_class": pred_class, "confidence": confidence,
         "l2_distance": _m["l2_distance"],
         "euclidean_dist_zscore": _m["euclidean_dist_zscore"],
@@ -382,26 +395,49 @@ def _summarize_results(
         def _avg(key, rows=successes):
             return float(np.mean([r[key] for r in rows])) if rows else 0.0
 
+        def _std(key, rows=successes):
+            return float(np.std([r[key] for r in rows], ddof=1)) if len(rows) > 1 else 0.0
+
         summary_rows.append({
             "method": method,
             "validity_rate": 100.0 * float(np.mean([r.get("validity", 0.0) for r in method_rows])) if method_rows else 0.0,
+            "validity_rate_std": 100.0 * float(np.std([r.get("validity", 0.0) for r in method_rows], ddof=1)) if len(method_rows) > 1 else 0.0,
             "avg_confidence": _avg("confidence"),
+            "std_confidence": _std("confidence"),
             "avg_l2_distance": _avg("l2_distance"),
+            "std_l2_distance": _std("l2_distance"),
             "avg_euclidean_dist_zscore": _avg("euclidean_dist_zscore"),
+            "std_euclidean_dist_zscore": _std("euclidean_dist_zscore"),
             "avg_manhattan_distance": _avg("manhattan_distance"),
+            "std_manhattan_distance": _std("manhattan_distance"),
             "avg_pct_changed": _avg("pct_changed"),
+            "std_pct_changed": _std("pct_changed"),
             "avg_normalized_distance": _avg("normalized_distance"),
+            "std_normalized_distance": _std("normalized_distance"),
             "avg_l0_norm": _avg("l0_norm"),
+            "std_l0_norm": _std("l0_norm"),
             "avg_compactness": _avg("compactness"),
+            "std_compactness": _std("compactness"),
             "avg_temporal_consistency": _avg("temporal_consistency"),
+            "std_temporal_consistency": _std("temporal_consistency"),
             "avg_range_validity": _avg("range_validity"),
+            "std_range_validity": _std("range_validity"),
             "avg_autocorr_preservation": _avg("autocorr_preservation"),
+            "std_autocorr_preservation": _std("autocorr_preservation"),
             "avg_validity": _avg("validity"),
+            "std_validity": _std("validity"),
             "avg_sparsity": _avg("sparsity"),
+            "std_sparsity": _std("sparsity"),
             "avg_keane_validity": float(np.mean([r["keane_validity"] for r in keane_rows])) if keane_rows else 0.0,
+            "std_keane_validity": float(np.std([r["keane_validity"] for r in keane_rows], ddof=1)) if len(keane_rows) > 1 else 0.0,
             "avg_keane_proximity": float(np.mean([r["keane_proximity"] for r in keane_rows])) if keane_rows else 0.0,
+            "std_keane_proximity": float(np.std([r["keane_proximity"] for r in keane_rows], ddof=1)) if len(keane_rows) > 1 else 0.0,
             "avg_keane_compactness": float(np.mean([r["keane_compactness"] for r in keane_rows])) if keane_rows else 0.0,
+            "std_keane_compactness": float(np.std([r["keane_compactness"] for r in keane_rows], ddof=1)) if len(keane_rows) > 1 else 0.0,
             "avg_time": float(np.mean([r["elapsed"] for r in method_rows])) if method_rows else 0.0,
+            "std_time": float(np.std([r["elapsed"] for r in method_rows], ddof=1)) if len(method_rows) > 1 else 0.0,
+            "avg_n_iter": _avg("n_iter"),
+            "std_n_iter": _std("n_iter"),
         })
     return summary_rows
 
@@ -415,7 +451,7 @@ def _print_summary(title: str, methods: Sequence[str], summary_rows: Sequence[Di
         f"{'Method':<{w}} {'Validity':<9} {'Conf':<7} {'L2':<9} {'ZL2':<9} {'L1':<9} {'%Chg':<7} "
         f"{'NormD':<8} {'L0':<7} {'Cmpt':<7} {'TmpC':<7} {'RngV':<7} {'ACorr':<7} "
         f"{'Valid':<7} {'Spar':<7} "
-        f"{'K.Val':<7} {'K.Prx':<8} {'K.Cmp':<8} {'Time':<7}"
+        f"{'K.Val':<7} {'K.Prx':<8} {'K.Cmp':<8} {'Time':<7} {'Iters':<7}"
     )
     print("-" * 80)
     for row in summary_rows:
@@ -428,19 +464,23 @@ def _print_summary(title: str, methods: Sequence[str], summary_rows: Sequence[Di
             f"{row['avg_range_validity']:<7.4f} {row['avg_autocorr_preservation']:<7.4f} "
             f"{row['avg_validity']:<7.4f} {row['avg_sparsity']:<7.4f} "
             f"{row['avg_keane_validity']:<7.4f} {row['avg_keane_proximity']:<8.4f} "
-            f"{row['avg_keane_compactness']:<8.4f} {row['avg_time']:<7.4f}"
+            f"{row['avg_keane_compactness']:<8.4f} {row['avg_time']:<7.4f} {row['avg_n_iter']:<7.2f}"
         )
 
 
 def _save_summary_csv(csv_path: str, summary_rows: Sequence[Dict[str, object]]):
     fieldnames = [
-        "method", "validity_rate", "avg_confidence",
-        "avg_l2_distance", "avg_euclidean_dist_zscore", "avg_manhattan_distance",
-        "avg_pct_changed", "avg_normalized_distance", "avg_l0_norm", "avg_compactness",
-        "avg_temporal_consistency", "avg_range_validity", "avg_autocorr_preservation",
-        "avg_validity", "avg_sparsity",
-        "avg_keane_validity", "avg_keane_proximity", "avg_keane_compactness",
-        "avg_time",
+        "method", "validity_rate", "validity_rate_std", "avg_confidence", "std_confidence",
+        "avg_l2_distance", "std_l2_distance", "avg_euclidean_dist_zscore", "std_euclidean_dist_zscore",
+        "avg_manhattan_distance", "std_manhattan_distance",
+        "avg_pct_changed", "std_pct_changed", "avg_normalized_distance", "std_normalized_distance",
+        "avg_l0_norm", "std_l0_norm", "avg_compactness", "std_compactness",
+        "avg_temporal_consistency", "std_temporal_consistency",
+        "avg_range_validity", "std_range_validity", "avg_autocorr_preservation", "std_autocorr_preservation",
+        "avg_validity", "std_validity", "avg_sparsity", "std_sparsity",
+        "avg_keane_validity", "std_keane_validity", "avg_keane_proximity", "std_keane_proximity",
+        "avg_keane_compactness", "std_keane_compactness",
+        "avg_time", "std_time", "avg_n_iter", "std_n_iter",
     ]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -448,6 +488,43 @@ def _save_summary_csv(csv_path: str, summary_rows: Sequence[Dict[str, object]]):
         for row in summary_rows:
             writer.writerow(row)
     print(f"Saved summary CSV: {csv_path}")
+
+
+def _paper_summary_rows(suite_name: str, summary_rows: Sequence[Dict[str, object]], dataset_name: str) -> List[Dict[str, object]]:
+    """Subset of summary_rows matching the paper's reported metrics:
+    Validity, L2 Distance, Percentage Changed, Normalised Distance,
+    Range Validity, Autocorrelation Preservation, Confidence, Average Time.
+    """
+    return [
+        {
+            "dataset": dataset_name,
+            "suite": suite_name,
+            "method": row["method"],
+            "validity": row["validity_rate"] / 100.0,
+            "l2_distance": row["avg_l2_distance"],
+            "pct_changed": row["avg_pct_changed"],
+            "normalized_distance": row["avg_normalized_distance"],
+            "range_validity": row["avg_range_validity"],
+            "autocorr_preservation": row["avg_autocorr_preservation"],
+            "confidence": row["avg_confidence"],
+            "avg_time": row["avg_time"],
+            "avg_n_iter": row["avg_n_iter"],
+        }
+        for row in summary_rows
+    ]
+
+
+def _save_paper_summary_csv(csv_path: str, paper_rows: Sequence[Dict[str, object]]):
+    fieldnames = [
+        "dataset", "suite", "method", "validity", "l2_distance", "pct_changed", "normalized_distance",
+        "range_validity", "autocorr_preservation", "confidence", "avg_time", "avg_n_iter",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in paper_rows:
+            writer.writerow(row)
+    print(f"Saved paper summary CSV: {csv_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +556,9 @@ def _method_color(method: str) -> str:
         return "goldenrod"
     if method.startswith("multi_nun_closest"):
         return "royalblue"
+    for base, color in palette.items():
+        if method.startswith(f"{base}_n") and method.endswith("_cycle"):
+            return color
     return "darkorange"
 
 
@@ -504,10 +584,11 @@ def _save_summary_plot(
     validities = [r["avg_validity"] for r in summary_rows]
     sparsities = [r["avg_sparsity"] for r in summary_rows]
     avg_times = [r["avg_time"] for r in summary_rows]
+    avg_n_iters = [r["avg_n_iter"] for r in summary_rows]
 
     fig_height = max(28, 0.85 * len(names) + 24)
     fig, axes = plt.subplots(5, 4, figsize=(22, fig_height))
-    fig.suptitle(title, fontsize=14, fontweight="bold")
+    fig.suptitle(title, fontsize=19, fontweight="bold")
 
     axes[0, 0].barh(names, validity_rates, color="steelblue")
     axes[0, 0].set_title("Validity Rate (%)")
@@ -591,7 +672,12 @@ def _save_summary_plot(
     axes[3, 3].set_xlim(left=0, right=1.05)
     _mark_best_barh(axes[3, 3], compactnesses, higher_is_better=True)
 
-    for ax in axes[4, :]:
+    axes[4, 0].barh(names, avg_n_iters, color="darkslateblue")
+    axes[4, 0].set_title("Average Iterations (lower better)")
+    axes[4, 0].set_xlim(left=0)
+    _mark_best_barh(axes[4, 0], avg_n_iters, higher_is_better=False)
+
+    for ax in axes[4, 1:]:
         ax.axis("off")
 
     for ax in axes.flat:
@@ -608,7 +694,7 @@ def _save_summary_plot(
         f"{plot_path[:-4]}_canonical.png" if plot_path.endswith(".png") else f"{plot_path}_canonical.png"
     )
     fig2, axes2 = plt.subplots(1, 4, figsize=(22, max(5, 0.4 * len(names) + 3)))
-    fig2.suptitle(f"{title} — Validity / Proximity / Sparsity / Plausibility", fontsize=14, fontweight="bold")
+    fig2.suptitle(f"{title} — Validity / Proximity / Sparsity / Plausibility", fontsize=19, fontweight="bold")
 
     axes2[0].barh(names, validity_rates, color="steelblue")
     axes2[0].set_title("Validity ↑")
@@ -660,12 +746,12 @@ def _save_sample_line_plot(
     fig.suptitle(
         f"IMFACT Ablation — {dataset_name} | sample={sample_idx} | "
         f"original={original_class} | target={target_class}",
-        fontsize=13, fontweight="bold",
+        fontsize=18, fontweight="bold",
     )
 
     x = np.arange(sample_cf.shape[1])
     axes[0].plot(x, sample_cf[0], color="steelblue", linewidth=1.4)
-    axes[0].set_title(f"Original — true class: {true_class}", fontsize=10)
+    axes[0].set_title(f"Original — true class: {true_class}", fontsize=14)
     axes[0].grid(True, alpha=0.25)
 
     for ax, outcome in zip(axes[1:], outcomes):
@@ -674,11 +760,11 @@ def _save_sample_line_plot(
             cf = _to_channel_first(outcome["counterfactual"])
             ax.plot(x, sample_cf[0], color="steelblue", linestyle="--", linewidth=1.2, label="original")
             ax.plot(x, cf[0], color="darkorange", linewidth=1.3, label="counterfactual")
-            ax.set_title(f"{method} [valid] pred={outcome['pred_class']}", fontsize=10)
+            ax.set_title(f"{method} [valid] pred={outcome['pred_class']}", fontsize=14)
             ax.legend(loc="upper right", fontsize="small")
         else:
             ax.plot(x, sample_cf[0], color="steelblue", linestyle="--", linewidth=1.2)
-            ax.set_title(f"{method} [invalid]", fontsize=10)
+            ax.set_title(f"{method} [invalid]", fontsize=14)
         ax.grid(True, alpha=0.25)
 
     plt.tight_layout(rect=[0, 0.01, 1, 0.97])
@@ -712,7 +798,7 @@ def _save_sample_umap_plot(
     bg_flat = bg.reshape(bg.shape[0], -1)
     n_neighbors = min(15, max(2, bg_flat.shape[0] - 1))
     reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, min_dist=0.15,
-                        metric="euclidean", random_state=42)
+                        metric="euclidean", random_state=13)
     bg_emb = reducer.fit_transform(bg_flat)
     orig_emb = reducer.transform(sample_cf.reshape(1, -1))[0]
     guide_emb = reducer.transform(guide_cf.reshape(1, -1))[0]
@@ -740,7 +826,7 @@ def _save_sample_umap_plot(
         ax.plot([orig_emb[0], cf_embs[idx, 0]], [orig_emb[1], cf_embs[idx, 1]],
                 color=color, alpha=0.35, linewidth=1.0)
 
-    ax.set_title(f"UMAP — {dataset_name} sample {sample_idx} | {original_class} → {target_class}", fontsize=12)
+    ax.set_title(f"UMAP — {dataset_name} sample {sample_idx} | {original_class} → {target_class}", fontsize=16)
     ax.set_xlabel("UMAP-1")
     ax.set_ylabel("UMAP-2")
     ax.legend(loc="best", fontsize="small", ncols=2)
@@ -777,6 +863,8 @@ def parse_args():
                         help="Comma-separated n_nuns values for multi-NUN ablation (default: 2,3,5)")
     parser.add_argument("--downsample", type=int, default=1,
                         help="Downsample factor applied to each time series (default: 1)")
+    parser.add_argument("--seed", type=int, default=13,
+                        help="Random seed for reproducible sample selection (default: 13)")
     return parser.parse_args()
 
 
@@ -804,6 +892,7 @@ def main():
     multi_nun_counts = _parse_multi_nun_counts(args.multi_nun_counts)
     method_ablation_configs = _build_method_ablation_configs()
     nun_ablation_configs = _build_nun_ablation_configs(multi_nun_counts)
+    method_nun_ablation_configs = _build_method_nun_ablation_configs(multi_nun_counts)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -845,7 +934,7 @@ def main():
     projection_labels = np.asarray([dataset_test[i][1] for i in range(len(dataset_test))])
 
     print("\nSelecting correctly classified test samples ...")
-    selected_indices = _select_correct_samples(model, dataset_test, args.max_samples, device)
+    selected_indices = _select_correct_samples(model, dataset_test, args.max_samples, device, seed=args.seed)
     print(f"Selected {len(selected_indices)} samples")
     if not selected_indices:
         raise RuntimeError("No correctly classified samples found.")
@@ -861,6 +950,7 @@ def main():
     suite_configs = {
         "method_ablation": method_ablation_configs,
         "nun_ablation": nun_ablation_configs,
+        "method_nun_ablation": method_nun_ablation_configs,
     }
     suite_results: Dict[str, Dict[str, List[Dict[str, object]]]] = {
         suite: {m: [] for m in cfg.keys()} for suite, cfg in suite_configs.items()
@@ -916,16 +1006,20 @@ def main():
                     original_class, target_class, dataset_name,
                 )
 
+    paper_rows: List[Dict[str, object]] = []
     for suite_name, configs in suite_configs.items():
         methods = list(configs.keys())
         summary_rows = _summarize_results(methods, suite_results[suite_name])
         _print_summary(f"IMFACT {suite_name.upper()} — {dataset_name}", methods, summary_rows)
         _save_summary_csv(f"{out_prefix}_{suite_name}.csv", summary_rows)
+        paper_rows.extend(_paper_summary_rows(suite_name, summary_rows, dataset_name))
         _save_summary_plot(
             f"{out_prefix}_{suite_name}.png",
             summary_rows,
             f"IMFACT {suite_name.replace('_', ' ').title()} on {dataset_name}",
         )
+
+    _save_paper_summary_csv(f"{out_prefix}_results_summary_paper.csv", paper_rows)
 
 
 if __name__ == "__main__":
