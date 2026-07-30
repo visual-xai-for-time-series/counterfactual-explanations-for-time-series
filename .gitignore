@@ -143,3 +143,5 @@ data/
 # Vendored external reference repos (cloned for baseline comparisons, not part of this repo)
 **/external/
 lightning_logs/
+
+.DS_Store
