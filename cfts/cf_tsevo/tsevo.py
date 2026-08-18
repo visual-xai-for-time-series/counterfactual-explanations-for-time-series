@@ -164,9 +164,9 @@ def nsga2_select(population, offspring, pop_size):
 
 def tsevo_cf(
     sample: np.ndarray,
-    dataset,
     model: torch.nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     population_size: int = 50,
     generations: int = 100,
     crossover_rate: float = 0.9,
@@ -184,9 +184,11 @@ def tsevo_cf(
     
     Args:
         sample: Original time series sample
-        dataset: Dataset object (for compatibility with other methods)
         model: Trained classification model
         target_class: Target class for counterfactual (if None, finds different class)
+        dataset: Training data used to build a target-class reference set for
+            reference-guided mutation. Optional -- if omitted, falls back to
+            pure Gaussian mutation with no reference-guided swaps.
         population_size: Size of evolutionary population
         generations: Number of evolutionary generations
         crossover_rate: Probability of crossover

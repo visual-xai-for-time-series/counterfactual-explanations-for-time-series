@@ -65,9 +65,9 @@ class AutoEncoder(nn.Module):
 #
 ####
 def latent_cf_generate(sample,
-                       dataset,
                        model,
-                       target=None,
+                       target_class=None,
+                       dataset=None,
                        latent_dim=8,
                        max_iter=100,
                        lr=0.01,
@@ -75,23 +75,29 @@ def latent_cf_generate(sample,
                        autoencoder=None,
                        verbose=False):
     """Generate counterfactual using latent space optimization.
-    
+
     Args:
         sample: Input time series to generate counterfactual for
-        dataset: Training dataset to train autoencoder (if not provided)
         model: Classifier model
-        target: Target class for counterfactual
+        target_class: Target class for counterfactual
+        dataset: Training dataset to train autoencoder from (required unless
+            a pre-trained `autoencoder` is passed in)
         latent_dim: Dimensionality of latent space
         max_iter: Maximum optimization iterations
         lr: Learning rate for optimization
         lambda_dist: Weight for distance regularization in latent space
         autoencoder: Pre-trained autoencoder (optional)
         verbose: Print progress information
-        
+
     Returns:
         cf: Generated counterfactual time series
         y_cf: Prediction for counterfactual
     """
+    if dataset is None and autoencoder is None:
+        raise ValueError(
+            "latent_cf_generate requires either a dataset (to train an "
+            "autoencoder) or a pre-trained autoencoder."
+        )
     device = next(model.parameters()).device
     
     def model_predict(data):
@@ -118,13 +124,13 @@ def latent_cf_generate(sample,
     y_original = model_predict(sample.reshape(sample.shape))[0]
     label_original = np.argmax(y_original)
     
-    if target is None:
+    if target_class is None:
         # Find the class with second highest probability
         sorted_indices = np.argsort(y_original)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
     if verbose:
-        print(f"LatentCF: Original class {label_original}, Target class {target}")
+        print(f"LatentCF: Original class {label_original}, Target class {target_class}")
     
     # Train autoencoder if not provided
     if autoencoder is None:
@@ -195,8 +201,8 @@ def latent_cf_generate(sample,
         
         pred = model(cf_input)
         
-        # Classification loss - maximize target class probability
-        target_prob = pred[0, target]
+        # Classification loss - maximize target_class class probability
+        target_prob = pred[0, target_class]
         
         # Distance in latent space
         latent_dist = torch.norm(z - z_original)
@@ -210,7 +216,7 @@ def latent_cf_generate(sample,
         # Check validity
         y_cf = detach_to_numpy(pred)[0]
         current_class = int(np.argmax(y_cf))
-        current_validity = y_cf[target]
+        current_validity = y_cf[target_class]
         
         # Track best validity
         if current_validity > best_validity:
@@ -219,11 +225,11 @@ def latent_cf_generate(sample,
         
         # Debug output
         if verbose and iteration % 20 == 0:
-            print(f"LatentCF iter {iteration}: pred_class={current_class}, target={target}, "
+            print(f"LatentCF iter {iteration}: pred_class={current_class}, target_class={target_class}, "
                   f"validity={current_validity:.4f}, loss={loss.item():.4f}, latent_dist={latent_dist.item():.4f}")
         
-        # Stop if target class achieved
-        if current_class == target:
+        # Stop if target_class class achieved
+        if current_class == target_class:
             if verbose:
                 print(f"LatentCF: Found counterfactual at iteration {iteration}")
             best_cf = detach_to_numpy(cf_flat).reshape(sample.shape)

@@ -36,11 +36,11 @@ def euclidean_dist(x, y):
 #
 # Classic counterfactual explanation method using gradient-based optimization
 # or genetic algorithms to find minimal perturbations that change the model's
-# prediction. Focuses on proximity while achieving target prediction.
+# prediction. Focuses on proximity while achieving target_class prediction.
 #
 # This is a genetic model-agnostic variant using the sensitivity of the model.
 ####
-def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1, verbose=False):
+def wachter_genetic_cf(sample, model, target_class=None, max_steps=1000, step_size=0.1, verbose=False):
 
     device = next(model.parameters()).device
 
@@ -69,13 +69,13 @@ def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1
     y_cf = model_predict(sample_cf.reshape(sample.shape))[0]
     label_cf = np.argmax(y_cf)
     
-    if not target:
+    if not target_class:
         # Find the class with second highest probability (not just binary 0/1)
         sorted_indices = np.argsort(y_cf)[::-1]  # Sort in descending order
-        target = int(sorted_indices[1])  # Second most likely class
+        target_class = int(sorted_indices[1])  # Second most likely class
     
     if verbose:
-        print(f"Wachter Genetic: Original class {label_cf}, Target class {target}, step_size={step_size}")
+        print(f"Wachter Genetic: Original class {label_cf}, Target class {target_class}, step_size={step_size}")
 
     # Iterate until the counterfactual prediction is different from the original prediction or the maximum number of steps is reached
     for step in range(max_steps):
@@ -98,9 +98,9 @@ def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1
             y_preds.append(y_pred_minus)
             feature_changes.append((i, -step_size))
 
-        # Find the change that results in the greatest increase in target class probability
+        # Find the change that results in the greatest increase in target_class class probability
         y_preds = np.array(y_preds)
-        target_improvements = y_preds[:, target] - y_cf[target]  # How much target class probability improves
+        target_improvements = y_preds[:, target_class] - y_cf[target_class]  # How much target_class class probability improves
         
         best_change_idx = np.argmax(target_improvements)
         best_feature_idx, best_step = feature_changes[best_change_idx]
@@ -112,21 +112,21 @@ def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1
         # Get new prediction
         y_cf = model_predict(sample_cf.reshape(sample.shape))[0]
         current_class = np.argmax(y_cf)
-        current_target_prob = y_cf[target]
+        current_target_prob = y_cf[target_class]
         
         # Debug output every 200 steps
         if verbose and step % 200 == 0:
-            print(f"Wachter Genetic step {step}: pred_class={current_class}, target={target}, "
+            print(f"Wachter Genetic step {step}: pred_class={current_class}, target_class={target_class}, "
                   f"target_prob={current_target_prob:.4f}, improvement={best_improvement:.4f}")
         
-        # If the counterfactual prediction matches target, return it
-        if current_class == target:
+        # If the counterfactual prediction matches target_class, return it
+        if current_class == target_class:
             if verbose:
                 print(f"Wachter Genetic: Found counterfactual at step {step}")
             return sample_cf.reshape(sample.shape), y_cf
 
     if verbose:
-        print(f"Wachter Genetic: Max steps reached. Final target probability: {y_cf[target]:.4f}")
+        print(f"Wachter Genetic: Max steps reached. Final target_class probability: {y_cf[target_class]:.4f}")
     # If the maximum number of steps is reached without finding a counterfactual, return None
     return None, None
 
@@ -141,9 +141,9 @@ def wachter_genetic_cf(sample, model, target=None, max_steps=1000, step_size=0.1
 #
 ####
 def wachter_gradient_cf(sample,
-                        dataset,
                         model,
-                        target=None,
+                        target_class=None,
+                        dataset=None,
                         lb=None,
                         lb_step=None,
                         max_cfs=1000,
@@ -156,6 +156,11 @@ def wachter_gradient_cf(sample,
     passing a torch index into a numpy array). Operates on tensors on the same
     device as the model and keeps conversions to/from numpy only for I/O.
     """
+    if dataset is None and not full_random:
+        raise ValueError(
+            "wachter_gradient_cf requires a dataset to seed the candidate "
+            "counterfactual unless full_random=True."
+        )
     device = next(model.parameters()).device
 
     # prepare input shapes: ensure consistent with model expectations
@@ -173,14 +178,14 @@ def wachter_gradient_cf(sample,
     # initial prediction and label
     y_cf = detach_to_numpy(model(sample_t))[0]
     label_cf = int(np.argmax(y_cf))
-    if target is None:
+    if target_class is None:
         # Find the class with second highest probability (not just binary 0/1)
         sorted_indices = np.argsort(y_cf)[::-1]  # Sort in descending order
-        target = int(sorted_indices[1])  # Second most likely class
-    target_t = torch.tensor([target], dtype=torch.long, device=device)
+        target_class = int(sorted_indices[1])  # Second most likely class
+    target_t = torch.tensor([target_class], dtype=torch.long, device=device)
     
     if verbose:
-        print(f"Wachter Gradient: Original class {label_cf}, Target class {target}")
+        print(f"Wachter Gradient: Original class {label_cf}, Target class {target_class}")
 
     # distance functions using torch tensors
     def dist(x, y):
@@ -253,7 +258,7 @@ def wachter_gradient_cf(sample,
         with torch.no_grad():
             y_cf = detach_to_numpy(model(sample_cf))[0]
         sample_cf_np = detach_to_numpy(sample_cf.squeeze(0))  # Remove batch dimension
-        current_validity = y_cf[target]
+        current_validity = y_cf[target_class]
         current_loss = float(loss.item())
 
         # keep only the best candidate seen so far instead of the full history
@@ -269,11 +274,11 @@ def wachter_gradient_cf(sample,
         # Debug output every 200 iterations
         if verbose and iteration % 200 == 0:
             pred_class = int(np.argmax(y_cf))
-            print(f"Wachter Gradient iter {iteration}: pred_class={pred_class}, target={target}, "
+            print(f"Wachter Gradient iter {iteration}: pred_class={pred_class}, target_class={target_class}, "
                   f"validity={current_validity:.4f}, loss={loss.item():.4f}")
 
-        # stop if prediction matches target
-        if int(np.argmax(y_cf)) == target:
+        # stop if prediction matches target_class
+        if int(np.argmax(y_cf)) == target_class:
             if verbose:
                 print(f"Wachter Gradient: Found counterfactual at iteration {iteration}")
             break

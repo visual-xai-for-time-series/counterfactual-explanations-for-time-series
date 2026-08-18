@@ -134,7 +134,7 @@ def _euclidean_distance(a, b):
 #      (weighted by inverse distance) until the k-NN prediction flips.
 # ──────────────────────────────────────────────────────────────────────────────
 
-def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
+def ts_tweaking_knn_cf(sample, model, target_class=None, dataset=None, k=5, n_clusters=5,
                        alpha_steps=20, verbose=False):
     """Global time series tweaking (Algorithm 1, τ_NN) from Karlsson et al.
 
@@ -146,12 +146,12 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
     ----------
     sample : array-like, shape (L,) or (C, L)
         The query time series to explain.
-    dataset : list of (x, y) tuples
-        Training data where x is a time series and y is its label.
     model : torch.nn.Module
         A trained PyTorch classifier. Must accept input of shape (B, C, L).
-    target : int or None
+    target_class : int or None
         Desired target class. If None, uses the nearest unlike neighbor's class.
+    dataset : list of (x, y) tuples
+        Training data where x is a time series and y is its label. Required.
     k : int
         Number of nearest neighbors for the k-NN logic (default 5).
     n_clusters : int
@@ -168,6 +168,8 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
     scores : np.ndarray
         The model's output scores/probabilities for the counterfactual.
     """
+    if dataset is None:
+        raise ValueError("ts_tweaking_knn_cf requires a dataset to build k-means cluster centroids.")
     device = next(model.parameters()).device
 
     def model_predict(arr):
@@ -186,7 +188,7 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
     label_sample = int(np.argmax(preds_sample))
 
     # Determine target class
-    if target is None:
+    if target_class is None:
         # Use the nearest unlike neighbor (NUN) class
         mask_diff = labels != label_sample
         if not np.any(mask_diff):
@@ -196,21 +198,21 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
         neigh = NearestNeighbors(n_neighbors=1, metric="euclidean")
         neigh.fit(candidates.reshape(len(candidates), -1))
         _, idxs = neigh.kneighbors(sample_cf.reshape(1, -1))
-        target = int(candidate_labels[idxs[0, 0]])
+        target_class = int(candidate_labels[idxs[0, 0]])
 
-    if label_sample == target:
+    if label_sample == target_class:
         if verbose:
             print("Sample already classified as target class.")
         return _simple_revert(sample_cf, sample_ori), preds_sample.reshape(-1)
 
     # --- Step 1: Cluster training data of the target class ---
-    mask_target = labels == target
+    mask_target = labels == target_class
     target_data = time_series_data[mask_target]  # (N_target, C, L)
     n_target = len(target_data)
 
     if n_target == 0:
         if verbose:
-            print(f"No training samples for target class {target}.")
+            print(f"No training samples for target class {target_class}.")
         return _simple_revert(sample_cf, sample_ori), preds_sample.reshape(-1)
 
     actual_n_clusters = min(n_clusters, n_target)
@@ -221,7 +223,7 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
     centroids = kmeans.cluster_centers_.reshape(actual_n_clusters, C, L)
 
     # --- Step 2: Select centroids where majority of nearest training
-    #             series have the target label ---
+    #             series have the target_class label ---
     # For each centroid, find its k nearest training series (from ALL data)
     # and check if the majority are labeled as the target class.
     all_flat = time_series_data.reshape(N, -1)
@@ -234,7 +236,7 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
         centroid_flat = centroids[ci].reshape(1, -1)
         _, nn_idxs = neigh_all.kneighbors(centroid_flat)
         nn_labels = labels[nn_idxs[0]]
-        majority_target = np.sum(nn_labels == target) > k_check / 2
+        majority_target = np.sum(nn_labels == target_class) > k_check / 2
         if majority_target:
             valid_centroids.append(centroids[ci])
 
@@ -254,7 +256,7 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
     weights = 1.0 / distances
     weights = weights / weights.sum()
 
-    # Weighted target direction
+    # Weighted target_class direction
     target_direction = np.zeros_like(sample_cf)
     for w, vc in zip(weights, valid_centroids):
         target_direction += w * vc
@@ -271,7 +273,7 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
         y_candidate = model_predict(cf_candidate.reshape(1, C, L)).reshape(-1)
         pred_class = int(np.argmax(y_candidate))
 
-        if pred_class == target:
+        if pred_class == target_class:
             cost = _euclidean_distance(sample_cf, cf_candidate)
             if cost < best_cost:
                 best_cf = cf_candidate.copy()
@@ -283,8 +285,8 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
 
     if verbose:
         pred_final = int(np.argmax(best_scores))
-        status = "SUCCESS" if pred_final == target else "FAILED"
-        print(f"[τ_NN] {status}: original={label_sample}, target={target}, "
+        status = "SUCCESS" if pred_final == target_class else "FAILED"
+        print(f"[τ_NN] {status}: original={label_sample}, target_class={target_class}, "
               f"predicted={pred_final}, cost={best_cost:.4f}")
 
     return _simple_revert(best_cf, sample_ori), best_scores
@@ -304,7 +306,7 @@ def ts_tweaking_knn_cf(sample, dataset, model, target=None, k=5, n_clusters=5,
 #   1. Extracting discriminative subsequences (shapelets) from the training
 #      data of the target class.
 #   2. Finding the best-matching location in the query for each shapelet.
-#   3. Replacing the query's subsequence with the target shapelet
+#   3. Replacing the query's subsequence with the target_class shapelet
 #      (irreversible: full replacement past the threshold).
 #   4. Greedily applying the replacement that flips the prediction with
 #      minimal cost.
@@ -363,7 +365,7 @@ def _find_best_match(series_channel, shapelet):
     return best_idx, best_dist
 
 
-def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
+def ts_tweaking_irreversible_cf(sample, model, target_class=None, dataset=None,
                                 n_shapelets=20, min_shapelet_len=3,
                                 max_shapelet_ratio=0.5, random_state=42,
                                 verbose=False):
@@ -377,12 +379,12 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
     ----------
     sample : array-like, shape (L,) or (C, L)
         The query time series to explain.
-    dataset : list of (x, y) tuples
-        Training data where x is a time series and y is its label.
     model : torch.nn.Module
         A trained PyTorch classifier.
-    target : int or None
+    target_class : int or None
         Desired target class. If None, uses the nearest unlike neighbor's class.
+    dataset : list of (x, y) tuples
+        Training data where x is a time series and y is its label. Required.
     n_shapelets : int
         Number of candidate shapelets to extract (default 20).
     min_shapelet_len : int
@@ -401,6 +403,8 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
     scores : np.ndarray
         The model's output scores/probabilities for the counterfactual.
     """
+    if dataset is None:
+        raise ValueError("ts_tweaking_irreversible_cf requires a dataset to fit the shapelet forest.")
     device = next(model.parameters()).device
 
     def model_predict(arr):
@@ -415,7 +419,7 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
     label_sample = int(np.argmax(preds_sample))
 
     # Determine target class
-    if target is None:
+    if target_class is None:
         mask_diff = labels != label_sample
         if not np.any(mask_diff):
             return _simple_revert(sample_cf, sample_ori), preds_sample.reshape(-1)
@@ -424,16 +428,16 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
         neigh = NearestNeighbors(n_neighbors=1, metric="euclidean")
         neigh.fit(candidates.reshape(len(candidates), -1))
         _, idxs = neigh.kneighbors(sample_cf.reshape(1, -1))
-        target = int(candidate_labels[idxs[0, 0]])
+        target_class = int(candidate_labels[idxs[0, 0]])
 
-    if label_sample == target:
+    if label_sample == target_class:
         if verbose:
             print("Sample already classified as target class.")
         return _simple_revert(sample_cf, sample_ori), preds_sample.reshape(-1)
 
     # --- Extract candidate shapelets from target class ---
     shapelets = _extract_shapelets(
-        time_series_data, labels, target,
+        time_series_data, labels, target_class,
         n_shapelets=n_shapelets,
         min_len=min_shapelet_len,
         max_len_ratio=max_shapelet_ratio,
@@ -442,7 +446,7 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
 
     if len(shapelets) == 0:
         if verbose:
-            print(f"No shapelets found for target class {target}.")
+            print(f"No shapelets found for target class {target_class}.")
         return _simple_revert(sample_cf, sample_ori), preds_sample.reshape(-1)
 
     # --- Rank shapelets by how well they match (lowest distance = most
@@ -477,7 +481,7 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
 
         cost = _euclidean_distance(sample_cf, cf_candidate)
 
-        if pred_class == target:
+        if pred_class == target_class:
             if cost < best_cost:
                 best_cf = cf_candidate.copy()
                 best_scores = y_candidate.copy()
@@ -500,7 +504,7 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
             y_candidate = model_predict(cf_candidate.reshape(1, C, L)).reshape(-1)
             pred_class = int(np.argmax(y_candidate))
 
-            if pred_class == target:
+            if pred_class == target_class:
                 cost = _euclidean_distance(sample_cf, cf_candidate)
                 if cost < best_cost:
                     best_cf = cf_candidate.copy()
@@ -516,8 +520,8 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
 
     if verbose:
         pred_final = int(np.argmax(best_scores))
-        status = "SUCCESS" if pred_final == target else "FAILED"
-        print(f"[τ_SF] {status}: original={label_sample}, target={target}, "
+        status = "SUCCESS" if pred_final == target_class else "FAILED"
+        print(f"[τ_SF] {status}: original={label_sample}, target_class={target_class}, "
               f"predicted={pred_final}, cost={best_cost:.4f}")
 
     return _simple_revert(best_cf, sample_ori), best_scores
@@ -536,7 +540,7 @@ def ts_tweaking_irreversible_cf(sample, dataset, model, target=None,
 # rather than pushing it all the way to the shapelet center.
 # ──────────────────────────────────────────────────────────────────────────────
 
-def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
+def ts_tweaking_reversible_cf(sample, model, target_class=None, dataset=None,
                               n_shapelets=20, min_shapelet_len=3,
                               max_shapelet_ratio=0.5, alpha_steps=20,
                               random_state=42, verbose=False):
@@ -550,12 +554,12 @@ def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
     ----------
     sample : array-like, shape (L,) or (C, L)
         The query time series to explain.
-    dataset : list of (x, y) tuples
-        Training data where x is a time series and y is its label.
     model : torch.nn.Module
         A trained PyTorch classifier.
-    target : int or None
+    target_class : int or None
         Desired target class. If None, uses the nearest unlike neighbor's class.
+    dataset : list of (x, y) tuples
+        Training data where x is a time series and y is its label. Required.
     n_shapelets : int
         Number of candidate shapelets to extract (default 20).
     min_shapelet_len : int
@@ -576,6 +580,8 @@ def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
     scores : np.ndarray
         The model's output scores/probabilities for the counterfactual.
     """
+    if dataset is None:
+        raise ValueError("ts_tweaking_reversible_cf requires a dataset to fit the shapelet forest.")
     device = next(model.parameters()).device
 
     def model_predict(arr):
@@ -590,7 +596,7 @@ def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
     label_sample = int(np.argmax(preds_sample))
 
     # Determine target class
-    if target is None:
+    if target_class is None:
         mask_diff = labels != label_sample
         if not np.any(mask_diff):
             return _simple_revert(sample_cf, sample_ori), preds_sample.reshape(-1)
@@ -599,16 +605,16 @@ def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
         neigh = NearestNeighbors(n_neighbors=1, metric="euclidean")
         neigh.fit(candidates.reshape(len(candidates), -1))
         _, idxs = neigh.kneighbors(sample_cf.reshape(1, -1))
-        target = int(candidate_labels[idxs[0, 0]])
+        target_class = int(candidate_labels[idxs[0, 0]])
 
-    if label_sample == target:
+    if label_sample == target_class:
         if verbose:
             print("Sample already classified as target class.")
         return _simple_revert(sample_cf, sample_ori), preds_sample.reshape(-1)
 
     # --- Extract candidate shapelets from target class ---
     shapelets = _extract_shapelets(
-        time_series_data, labels, target,
+        time_series_data, labels, target_class,
         n_shapelets=n_shapelets,
         min_len=min_shapelet_len,
         max_len_ratio=max_shapelet_ratio,
@@ -617,7 +623,7 @@ def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
 
     if len(shapelets) == 0:
         if verbose:
-            print(f"No shapelets found for target class {target}.")
+            print(f"No shapelets found for target class {target_class}.")
         return _simple_revert(sample_cf, sample_ori), preds_sample.reshape(-1)
 
     # --- Rank shapelets by match distance ---
@@ -651,7 +657,7 @@ def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
             y_candidate = model_predict(cf_candidate.reshape(1, C, L)).reshape(-1)
             pred_class = int(np.argmax(y_candidate))
 
-            if pred_class == target:
+            if pred_class == target_class:
                 cost = _euclidean_distance(sample_cf, cf_candidate)
                 if cost < best_cost:
                     best_cf = cf_candidate.copy()
@@ -677,7 +683,7 @@ def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
                 y_candidate = model_predict(cf_candidate.reshape(1, C, L)).reshape(-1)
                 pred_class = int(np.argmax(y_candidate))
 
-                if pred_class == target:
+                if pred_class == target_class:
                     cost = _euclidean_distance(sample_cf, cf_candidate)
                     if cost < best_cost:
                         best_cf = cf_candidate.copy()
@@ -702,8 +708,8 @@ def ts_tweaking_reversible_cf(sample, dataset, model, target=None,
 
     if verbose:
         pred_final = int(np.argmax(best_scores))
-        status = "SUCCESS" if pred_final == target else "FAILED"
-        print(f"[τ_SF-R] {status}: original={label_sample}, target={target}, "
+        status = "SUCCESS" if pred_final == target_class else "FAILED"
+        print(f"[τ_SF-R] {status}: original={label_sample}, target_class={target_class}, "
               f"predicted={pred_final}, cost={best_cost:.4f}")
 
     return _simple_revert(best_cf, sample_ori), best_scores

@@ -209,27 +209,29 @@ def compute_shapelet_heatmap(shapelet_locations, ts_length):
     return heatmap
 
 
-def sets_cf(sample, dataset, model, target_class=None,
+def sets_cf(sample, model, target_class=None, dataset=None,
             n_shapelets_per_class=5, shapelet_lengths=[5, 10, 20],
             threshold=0.5, max_tries=10, device=None, verbose=False):
     """
     Generate counterfactual using SETS (Shapelet-based) method.
-    
+
     Args:
         sample: Time series instance to explain
-        dataset: Training dataset (for shapelet extraction)
         model: Trained classifier model
         target_class: Target class for counterfactual (optional)
+        dataset: Training dataset for shapelet extraction (required)
         n_shapelets_per_class: Number of shapelets to extract per class
         shapelet_lengths: List of shapelet lengths to consider
         threshold: Distance threshold for shapelet matching
         max_tries: Maximum number of shapelet replacement attempts
         device: Device to run on
         verbose: Print progress
-        
+
     Returns:
         Tuple of (counterfactual, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("sets_cf requires a dataset to extract shapelets from.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -419,31 +421,33 @@ def sets_cf(sample, dataset, model, target_class=None,
     return None, None
 
 
-def sets_explain(sample, dataset, model, target_class=None,
+def sets_explain(sample, model, target_class=None, dataset=None,
                 n_shapelets_per_class=5, shapelet_lengths=[5, 10, 20],
                 threshold=0.5, device=None, verbose=False):
     """
     Generate SETS explanation with detailed shapelet information.
-    
+
     Returns both counterfactual and explanation details including:
     - Which shapelets were found in original
     - Which shapelets were replaced/added
     - Shapelet locations and heatmaps
-    
+
     Args:
         sample: Time series instance to explain
-        dataset: Training dataset
         model: Classifier model
         target_class: Target class
+        dataset: Training dataset (required)
         n_shapelets_per_class: Number of shapelets per class
         shapelet_lengths: Shapelet lengths to consider
         threshold: Matching threshold
         device: Device to use
         verbose: Print details
-        
+
     Returns:
         Dictionary with counterfactual, prediction, and explanation details
     """
+    if dataset is None:
+        raise ValueError("sets_explain requires a dataset to extract shapelets from.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -495,7 +499,7 @@ def sets_explain(sample, dataset, model, target_class=None,
     
     # Generate counterfactual
     cf, cf_pred = sets_cf(
-        sample_orig, dataset, model, target_class,
+        sample_orig, model, target_class, dataset,
         n_shapelets_per_class, shapelet_lengths, threshold, device=device, verbose=False
     )
     

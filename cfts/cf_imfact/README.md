@@ -1,5 +1,49 @@
 # IMFACT Counterfactual Experiments (FaultDetectionA + FruitFlies)
 
+## Installation & Quick Usage
+
+### Installation
+
+Either install the published PyPI package:
+
+```bash
+pip install counterfactuals-for-time-series
+```
+
+([PyPI project page](https://pypi.org/project/counterfactuals-for-time-series/)) — this installs the whole `cfts` package, including `cfts.cf_imfact`.
+
+Or, from a clone of this repository, install every method's dependencies (including this repo's exact pinned versions):
+
+```bash
+pip install -r requirements.txt
+```
+
+IMFACT's default decomposer (`decomposer="sift_imfs"`) is self-contained (just `numpy`/`scipy`, pulled in by either install method above). The optional `decomposer="emd"` backend additionally needs the `emd-signal` package (`pip install emd-signal`) — already listed in `requirements.txt`, but not a dependency of the PyPI package, so add it separately if you installed via `pip install counterfactuals-for-time-series`.
+
+### Quick Usage
+
+```python
+from cfts.cf_imfact.imfact import imfact_cf
+
+# sample:  query time series; 1-D (L,), (C, L), or (L, C)
+# model:   PyTorch classifier, forward(B, C, L) -> (B, n_classes)
+# dataset: sequence of (x, y) pairs used to search for a native guide (NUN)
+cf, prediction = imfact_cf(
+    sample=sample,
+    model=model,
+    dataset=dataset,
+    target_class=1,          # None flips to any different class
+    method="distance",       # "distance", "variance", "extremes", "coarse_to_fine"
+    step=0.05,
+    max_iter=200,
+    n_nuns=3,
+    nun_switch="cycle",      # "cycle" or "closest_psd"
+    verbose=True,
+)
+```
+
+`cf` is the counterfactual in the same shape/orientation as `sample`; `prediction` holds the model's output scores for `cf`. See the `imfact_cf` docstring in `imfact.py` for the full parameter reference, and `trace_imfact_variant_path` for a variant that also records the full per-iteration interpolation history (used by the notebook walkthroughs in §2.5/§3.5 below).
+
 ## Abstract
 This folder contains IMFACT (IMF-based Counterfactual) experiments on two UCR datasets:
 - FaultDetectionA

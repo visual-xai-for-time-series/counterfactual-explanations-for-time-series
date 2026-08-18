@@ -23,9 +23,9 @@ import random
 
 def moc_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     population_size: int = 100,
     generations: int = 50,
     mutation_rate: float = 0.1,
@@ -569,9 +569,9 @@ class MOCOptimizer:
 
 def moc_cf_diverse(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     n_counterfactuals: int = 5,
     population_size: int = 100,
     generations: int = 50,

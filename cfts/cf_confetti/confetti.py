@@ -4,6 +4,13 @@ import torch.nn as nn
 from typing import Optional, Tuple, List
 import warnings
 
+from cfts.cf__abstract.abstract import (
+    batched_predict,
+    ensure_ncl,
+    revert_orientation,
+    subsample_dataset,
+)
+
 
 def detach_to_numpy(data):
     """Move pytorch data to cpu and detach it to numpy data."""
@@ -37,7 +44,7 @@ def confetti_genetic_cf(
     model,
     reference_data,
     reference_labels=None,
-    target=None,
+    target_class=None,
     theta=0.51,
     max_iterations=100,
     population_size=50,
@@ -63,7 +70,7 @@ def confetti_genetic_cf(
         Shape: (n_samples, channels, length) or (n_samples, length)
     reference_labels : array-like, optional
         Labels for reference data. If None, will be predicted by model.
-    target : int, optional
+    target_class : int, optional
         Target class for counterfactual. If None, uses second most likely class.
     theta : float, default=0.51
         Minimum confidence threshold for valid counterfactual
@@ -111,10 +118,10 @@ def confetti_genetic_cf(
     y_orig = model_predict(sample.reshape(sample.shape))[0]
     label_orig = np.argmax(y_orig)
     
-    # Determine target class
-    if target is None:
+    # Determine target_class class
+    if target_class is None:
         sorted_indices = np.argsort(y_orig)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
     # Prepare reference data
     if isinstance(reference_data, np.ndarray):
@@ -155,7 +162,7 @@ def confetti_genetic_cf(
     nun_label = reference_labels[nun_idx]
     
     if verbose:
-        print(f"CONFETTI: Original class {label_orig}, Target class {target}")
+        print(f"CONFETTI: Original class {label_orig}, Target class {target_class}")
         print(f"CONFETTI: Found NUN with label {nun_label} at index {nun_idx}")
     
     # Determine subsequence length
@@ -172,7 +179,7 @@ def confetti_genetic_cf(
     def evaluate_individual(individual):
         """
         Evaluate fitness of an individual.
-        Returns: (confidence in target class, sparsity)
+        Returns: (confidence in target_class class, sparsity)
         Higher confidence is better, lower sparsity is better
         """
         # Create counterfactual by applying mask
@@ -184,7 +191,7 @@ def confetti_genetic_cf(
         
         # Get prediction
         pred = model_predict(cf.reshape(sample.shape))[0]
-        confidence = pred[target]
+        confidence = pred[target_class]
         sparsity = np.sum(individual) / total_length  # Fraction of changed values
         
         return confidence, sparsity
@@ -246,7 +253,7 @@ def confetti_genetic_cf(
                   f"sparsity={fitness_scores[best_idx][2]:.4f}")
         
         # Check if we found a valid counterfactual
-        if best_confidence >= theta and np.argmax(best_pred) == target:
+        if best_confidence >= theta and np.argmax(best_pred) == target_class:
             if verbose:
                 print(f"CONFETTI: Found valid counterfactual at iteration {iteration}")
             break
@@ -287,10 +294,439 @@ def confetti_genetic_cf(
     cf_shaped = cf.reshape(sample.shape)
     
     if verbose:
-        print(f"CONFETTI: Final confidence in target class: {best_confidence:.4f}")
+        print(f"CONFETTI: Final confidence in target_class class: {best_confidence:.4f}")
         print(f"CONFETTI: Predicted class: {np.argmax(best_pred)}")
     
     return cf_shaped, best_pred
+
+
+####
+# confetti_nsga_cf — a faithful(er) reimplementation of the real algorithm
+#
+# `confetti_genetic_cf` above shares CONFETTI's starting idea (NUN + evolutionary
+# search over a replace-with-NUN mask) but differs from the published algorithm
+# in two structural ways: it searches a *full-length* mask instead of a
+# contiguous window, and it optimizes a single weighted-sum fitness instead of a
+# genuine multi-objective Pareto search. `confetti_nsga_cf` closes both gaps:
+#
+#   - NUN search restricted to reference candidates the model classifies with
+#     confidence >= theta (mirrors `CONFETTI._nearest_unlike_neighbour`), falling
+#     back to an unrestricted search only if nothing clears that bar.
+#   - Binary search over contiguous window length, starting from the full
+#     series and shrinking whenever a window yields a valid counterfactual
+#     (mirrors `CONFETTI._optimization`'s `low`/`high` search). As in the
+#     official-package baseline used in cf_confetti_forda_comparison.ipynb, the
+#     window always starts at position 0 — the real package's alternative,
+#     CAM-guided starting point, is skipped here for the same architecture
+#     reason documented in that notebook (this repo's SimpleCNN has no
+#     GAP-before-classifier and downsamples the time axis, so CAM's temporal
+#     resolution wouldn't line up with the full-length window).
+#   - A real multi-objective evolutionary search (NSGA-II — non-dominated
+#     sorting + crowding distance) over three objectives per window: target_class-class
+#     confidence, sparsity (fraction of the window perturbed), and proximity
+#     (L2 distance to the original) — instead of a single weighted-sum fitness.
+#     Binary tournament selection, two-point crossover and bit-flip mutation
+#     mirror the official package's own operators (`TwoPointCrossover`,
+#     `BitflipMutation`, `BinaryRandomSampling`): Bernoulli(0.5) initial
+#     population, per-bit mutation probability `min(0.5, 1/window)` gated by a
+#     per-individual `mutation_probability`, `crossover_probability` gating
+#     whether two-point crossover is applied to a mating pair at all.
+#   - Final selection among all windows' successful candidates via the same
+#     alpha-weighted (confidence, sparsity) rule as
+#     `CONFETTI._select_best_solution` (proximity is optimized for during the
+#     search but, matching the original, not part of final selection).
+#
+# What is intentionally NOT reimplemented: the official package's NSGA-**III**
+# reference-direction machinery (`das_dennis`, `NSGA3`) and its compiled Rust
+# core. This uses NSGA-**II** instead — a simpler, well-known multi-objective
+# algorithm sharing the same non-dominated-sorting/crowding-distance backbone,
+# implemented here in plain NumPy. For three objectives on a population this
+# size, NSGA-II and NSGA-III behave similarly; the difference matters far more
+# at higher objective counts, which this problem doesn't have.
+####
+
+
+def _confetti_label(y) -> int:
+    """Collapse a one-hot vector or scalar label to an int class index."""
+    arr = np.asarray(y)
+    return int(np.argmax(arr)) if arr.ndim > 0 and arr.size > 1 else int(arr)
+
+
+def _confetti_softmax(x: np.ndarray) -> np.ndarray:
+    """Row-wise softmax; applied unconditionally so confidence/theta comparisons
+    are always valid probabilities regardless of whether the caller's model
+    already ends in its own softmax (same rationale as cf_comte/comte.py's
+    `_predict_probs`)."""
+    x = x - np.max(x, axis=-1, keepdims=True)
+    e = np.exp(x)
+    return e / np.sum(e, axis=-1, keepdims=True)
+
+
+def _fast_non_dominated_sort(objectives: np.ndarray) -> List[np.ndarray]:
+    """Standard NSGA-II non-dominated sort, vectorized.
+
+    Parameters
+    ----------
+    objectives : (N, M) array, all objectives minimized.
+
+    Returns
+    -------
+    list of index arrays, one per front, best (rank-0) front first.
+    """
+    n = objectives.shape[0]
+    if n == 0:
+        return []
+
+    # dom[p, q] == True iff individual p Pareto-dominates individual q.
+    less_eq = np.all(objectives[:, None, :] <= objectives[None, :, :], axis=2)
+    less = np.any(objectives[:, None, :] < objectives[None, :, :], axis=2)
+    dom = less_eq & less
+    np.fill_diagonal(dom, False)
+
+    counts = dom.sum(axis=0)  # counts[q] = number of individuals dominating q
+    assigned = np.zeros(n, dtype=bool)
+
+    fronts: List[np.ndarray] = []
+    current = np.where(counts == 0)[0]
+    while len(current) > 0:
+        fronts.append(current)
+        assigned[current] = True
+        counts = counts - dom[current, :].sum(axis=0)
+        current = np.where((counts == 0) & ~assigned)[0]
+
+    return fronts
+
+
+def _crowding_distance(front_objectives: np.ndarray) -> np.ndarray:
+    """NSGA-II crowding distance for a single front. Boundary points get inf."""
+    F, M = front_objectives.shape
+    distance = np.zeros(F)
+    if F <= 2:
+        return np.full(F, np.inf)
+
+    for m in range(M):
+        order = np.argsort(front_objectives[:, m])
+        distance[order[0]] = np.inf
+        distance[order[-1]] = np.inf
+        m_min, m_max = front_objectives[order[0], m], front_objectives[order[-1], m]
+        if m_max == m_min:
+            continue
+        for k in range(1, F - 1):
+            distance[order[k]] += (
+                front_objectives[order[k + 1], m] - front_objectives[order[k - 1], m]
+            ) / (m_max - m_min)
+    return distance
+
+
+def _nsga2_rank_and_crowd(objectives: np.ndarray):
+    """Return (rank, crowding_distance) arrays aligned to `objectives` rows."""
+    fronts = _fast_non_dominated_sort(objectives)
+    rank = np.empty(len(objectives), dtype=int)
+    crowd = np.empty(len(objectives), dtype=float)
+    for r, front in enumerate(fronts):
+        rank[front] = r
+        crowd[front] = _crowding_distance(objectives[front])
+    return rank, crowd, fronts
+
+
+def _nsga2_tournament_select(pop_size: int, rank: np.ndarray, crowd: np.ndarray, rng) -> int:
+    """Binary tournament: lower rank wins; ties broken by larger crowding distance."""
+    a, b = rng.integers(0, pop_size, size=2)
+    if rank[a] < rank[b]:
+        return int(a)
+    if rank[b] < rank[a]:
+        return int(b)
+    return int(a) if crowd[a] >= crowd[b] else int(b)
+
+
+def _nsga2_two_point_crossover(p1: np.ndarray, p2: np.ndarray, rng) -> Tuple[np.ndarray, np.ndarray]:
+    n = len(p1)
+    if n < 2:
+        return p1.copy(), p2.copy()
+    i, j = sorted(rng.integers(0, n, size=2))
+    c1, c2 = p1.copy(), p2.copy()
+    c1[i:j], c2[i:j] = p2[i:j], p1[i:j]
+    return c1, c2
+
+
+def _nsga2_bitflip_mutate(individual: np.ndarray, prob_var: float, rng) -> np.ndarray:
+    flips = rng.random(len(individual)) < prob_var
+    out = individual.copy()
+    out[flips] = 1 - out[flips]
+    return out
+
+
+def _nsga2_window_search(
+    sample_cl: np.ndarray,
+    nun_cl: np.ndarray,
+    window: int,
+    model: nn.Module,
+    device: torch.device,
+    target_class: int,
+    population_size: int,
+    max_generations: int,
+    crossover_probability: float,
+    mutation_probability: float,
+    rng,
+):
+    """NSGA-II search over which positions in `sample_cl[:, :window]` to replace
+    with `nun_cl`'s values at those same positions, minimizing
+    (1 - target_class confidence, sparsity, proximity).
+
+    Returns
+    -------
+    cand : (P, C, L) final-generation candidate counterfactuals
+    scores : (P, num_classes) raw model outputs for `cand`
+    objs : (P, 3) objective values for `cand`
+    success_mask : (P,) bool — cand[i]'s predicted class == target_class
+    """
+    C, L = sample_cl.shape
+    prob_var = min(0.5, 1.0 / max(window, 1))
+    nun_region = nun_cl[:, :window]
+    orig_region = sample_cl[:, :window]
+
+    def evaluate(pop_mask: np.ndarray):
+        P = len(pop_mask)
+        cand = np.repeat(sample_cl[None, :, :], P, axis=0)
+        mask_b = pop_mask.astype(bool)[:, None, :]  # (P, 1, window)
+        cand[:, :, :window] = np.where(
+            mask_b, np.broadcast_to(nun_region, (P, C, window)), np.broadcast_to(orig_region, (P, C, window))
+        )
+        scores = batched_predict(model, cand, device, batch_size=max(P, 1))
+        probs = _confetti_softmax(scores)
+        conf_target = probs[:, target_class]
+        sparsity = pop_mask.sum(axis=1) / window
+        proximity = np.linalg.norm((cand - sample_cl[None]).reshape(P, -1), axis=1)
+        objs = np.stack([1.0 - conf_target, sparsity, proximity], axis=1)
+        preds = np.argmax(scores, axis=1)
+        return cand, scores, objs, preds
+
+    population = (rng.random((population_size, window)) < 0.5).astype(np.int64)  # BinaryRandomSampling-style
+    cand, scores, objs, preds = evaluate(population)
+
+    for _ in range(max_generations):
+        rank, crowd, _ = _nsga2_rank_and_crowd(objs)
+
+        offspring = []
+        while len(offspring) < population_size:
+            i1 = _nsga2_tournament_select(population_size, rank, crowd, rng)
+            i2 = _nsga2_tournament_select(population_size, rank, crowd, rng)
+            p1, p2 = population[i1], population[i2]
+            if rng.random() < crossover_probability:
+                c1, c2 = _nsga2_two_point_crossover(p1, p2, rng)
+            else:
+                c1, c2 = p1.copy(), p2.copy()
+            if rng.random() < mutation_probability:
+                c1 = _nsga2_bitflip_mutate(c1, prob_var, rng)
+            if rng.random() < mutation_probability:
+                c2 = _nsga2_bitflip_mutate(c2, prob_var, rng)
+            offspring.append(c1)
+            if len(offspring) < population_size:
+                offspring.append(c2)
+        offspring = np.array(offspring[:population_size])
+        off_cand, off_scores, off_objs, off_preds = evaluate(offspring)
+
+        combined_pop = np.concatenate([population, offspring], axis=0)
+        combined_objs = np.concatenate([objs, off_objs], axis=0)
+        combined_cand = np.concatenate([cand, off_cand], axis=0)
+        combined_scores = np.concatenate([scores, off_scores], axis=0)
+        combined_preds = np.concatenate([preds, off_preds], axis=0)
+
+        fronts = _fast_non_dominated_sort(combined_objs)
+        new_indices: list[int] = []
+        for front in fronts:
+            if len(new_indices) + len(front) <= population_size:
+                new_indices.extend(front.tolist())
+            else:
+                crowd_f = _crowding_distance(combined_objs[front])
+                order = np.argsort(-crowd_f)
+                remaining = population_size - len(new_indices)
+                new_indices.extend(front[order[:remaining]].tolist())
+                break
+        new_indices_arr = np.array(new_indices)
+
+        population = combined_pop[new_indices_arr]
+        objs = combined_objs[new_indices_arr]
+        cand = combined_cand[new_indices_arr]
+        scores = combined_scores[new_indices_arr]
+        preds = combined_preds[new_indices_arr]
+
+    success_mask = preds == target_class
+    return cand, scores, objs, success_mask
+
+
+def confetti_nsga_cf(
+    sample: np.ndarray | list,
+    model: nn.Module,
+    target_class: Optional[int] = None,
+    dataset: list | np.ndarray = None,
+    theta: float = 0.51,
+    alpha: float = 0.5,
+    population_size: int = 60,
+    max_generations: int = 40,
+    crossover_probability: float = 1.0,
+    mutation_probability: float = 0.9,
+    max_samples: Optional[int] = None,
+    seed: Optional[int] = None,
+    verbose: bool = False,
+    *args,
+    **kwargs,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """CONFETTI reimplementation closer to the official algorithm than
+    `confetti_genetic_cf`: confidence-gated NUN search + binary search over a
+    contiguous replacement window + genuine multi-objective (NSGA-II) search
+    within that window. See the module comment above for exactly what mirrors
+    the official package vs. what's simplified (NSGA-II instead of NSGA-III, no
+    CAM-guided naive stage).
+
+    Follows the same signature pattern as every other CF method in this
+    repository (`comte_cf`, `native_guide_uni_cf`, …).
+
+    Parameters
+    ----------
+    sample:
+        Query time series. Accepts 1-D `(L,)`, `(C, L)` or `(L, C)` NumPy
+        arrays.
+    model:
+        Trained PyTorch classifier accepting `(B, C, L)` and returning
+        `(B, num_classes)` logits or probabilities.
+    target_class:
+        Class index to flip toward. When `None`, mirrors the official
+        package's own behaviour: any reference sample with a different
+        predicted label is an eligible NUN, and the target_class becomes whichever
+        label the chosen NUN carries (for binary datasets this is always "the
+        other class").
+    dataset:
+        Sequence of `(x, y)` pairs used as the NUN candidate pool. Required.
+    theta:
+        Minimum predicted confidence a NUN candidate must have in its own
+        predicted class to be eligible (mirrors `CONFETTI`'s `theta`). Relaxed
+        automatically if no candidate clears it.
+    alpha:
+        Trade-off weight between confidence and sparsity when selecting the
+        final counterfactual among all windows' successes (mirrors
+        `CONFETTI._select_best_solution`'s `alpha`).
+    population_size, max_generations, crossover_probability, mutation_probability:
+        NSGA-II parameters for the per-window search; same names/defaults as
+        `CONFETTI.generate_counterfactuals`'s own GA parameters (population
+        size and generation count are kept smaller by default here since this
+        is a pure-NumPy search, not the compiled Rust core).
+    max_samples:
+        If set, subsample `dataset` to at most this many items first.
+    seed:
+        Seeds the internal NSGA-II random generator.
+    verbose:
+        Print per-window progress when `True`.
+
+    Returns
+    -------
+    counterfactual : np.ndarray, same shape/orientation as `sample`.
+    scores : np.ndarray, shape (num_classes,) — raw model output for it.
+    """
+    if dataset is None:
+        raise ValueError("confetti_nsga_cf requires a dataset to search for a nearest unlike neighbour.")
+
+    device = next(model.parameters()).device
+    rng = np.random.default_rng(seed)
+
+    if max_samples is not None:
+        dataset = subsample_dataset(dataset, max_samples)
+
+    sample_cl, ts, ori = ensure_ncl(np.asarray(sample, dtype=np.float32), dataset)
+    C, L = sample_cl.shape
+    labels = np.array([_confetti_label(dataset[i][1]) for i in range(len(dataset))])
+
+    scores_orig = batched_predict(model, sample_cl.reshape(1, C, L), device)[0]
+    probs_orig = _confetti_softmax(scores_orig[None])[0]
+    label_orig = int(np.argmax(probs_orig))
+
+    ref_scores = batched_predict(model, ts, device)
+    ref_probs = _confetti_softmax(ref_scores)
+    pred_labels = np.argmax(ref_scores, axis=1)
+    pred_confidence = ref_probs[np.arange(len(ts)), pred_labels]
+
+    unlike_mask = (pred_labels == target_class) if target_class is not None else (pred_labels != label_orig)
+    confident_mask = unlike_mask & (pred_confidence >= theta)
+
+    if not np.any(confident_mask):
+        if verbose:
+            print(f"[confetti_nsga_cf] no NUN candidate clears theta={theta}; relaxing confidence gate.")
+        confident_mask = unlike_mask
+
+    if not np.any(confident_mask):
+        if verbose:
+            print("[confetti_nsga_cf] no unlike neighbour found at all.")
+        return revert_orientation(sample_cl, ori), scores_orig
+
+    candidate_idx = np.where(confident_mask)[0]
+    dists = np.linalg.norm((ts[candidate_idx] - sample_cl[None]).reshape(len(candidate_idx), -1), axis=1)
+    nun_idx = candidate_idx[np.argmin(dists)]
+    nun_cl = ts[nun_idx]
+
+    if target_class is None:
+        target_class = int(pred_labels[nun_idx])
+
+    if label_orig == target_class:
+        if verbose:
+            print(f"[confetti_nsga_cf] sample already predicted as target_class={target_class}.")
+        return revert_orientation(sample_cl, ori), scores_orig
+
+    successes = []  # list of {"cf", "scores", "objs"}
+    best_effort = {"cf": sample_cl, "scores": scores_orig, "conf": float(probs_orig[target_class])}
+
+    low, high = 1, L
+    while low <= high:
+        window = (low + high) // 2
+        cand, scores, objs, success_mask = _nsga2_window_search(
+            sample_cl, nun_cl, window, model, device, target_class,
+            population_size, max_generations, crossover_probability, mutation_probability, rng,
+        )
+
+        gen_best = int(np.argmax(1.0 - objs[:, 0]))
+        if (1.0 - objs[gen_best, 0]) > best_effort["conf"]:
+            best_effort = {"cf": cand[gen_best], "scores": scores[gen_best], "conf": float(1.0 - objs[gen_best, 0])}
+
+        succeeded = bool(np.any(success_mask))
+        if verbose:
+            print(f"[confetti_nsga_cf] window={window} succeeded={succeeded} n_success={int(success_mask.sum())}")
+
+        if succeeded:
+            for i in np.where(success_mask)[0]:
+                successes.append({"cf": cand[i], "scores": scores[i], "objs": objs[i]})
+            high = window - 1
+        else:
+            low = window + 1
+
+    if not successes:
+        if verbose:
+            print("[confetti_nsga_cf] no window reached target_class; returning best-effort candidate.")
+        return revert_orientation(best_effort["cf"], ori), best_effort["scores"]
+
+    confidences = np.array([1.0 - s["objs"][0] for s in successes])
+    sparsities = np.array([s["objs"][1] for s in successes])
+    # Selection mirrors CONFETTI._select_best_solution: alpha-weighted
+    # confidence vs. sparsity only (proximity guided the search but, matching
+    # the original, isn't part of final selection).
+    selection_score = alpha * confidences - (1 - alpha) * sparsities
+    best = successes[int(np.argmax(selection_score))]
+
+    if verbose:
+        print(
+            f"[confetti_nsga_cf] done — {len(successes)} successful candidate(s) across all windows, "
+            f"picked confidence={float(1.0 - best['objs'][0]):.4f} sparsity={float(best['objs'][1]):.4f}"
+        )
+
+    return revert_orientation(best["cf"], ori), best["scores"]
+
+
+# Default CONFETTI entry point for this repo, matching the `<method>_cf` naming
+# convention every other method uses (comte_cf, native_guide_uni_cf, …).
+# confetti_nsga_cf is the variant structurally closest to the published
+# algorithm (confidence-gated NUN search, contiguous-window binary search,
+# multi-objective NSGA-II) — see confetti_forda_comparison.ipynb for the
+# comparison against confetti_genetic_cf and the official package that
+# motivated picking it as the default over confetti_genetic_cf.
+confetti_cf = confetti_nsga_cf
 
 
 def confetti_package_cf(
@@ -299,7 +735,7 @@ def confetti_package_cf(
     reference_data,
     reference_labels=None,
     reference_weights=None,
-    target=None,
+    target_class=None,
     theta=0.51,
     alpha=0.5,
     n_partitions=3,
@@ -332,7 +768,7 @@ def confetti_package_cf(
         Labels for reference data
     reference_weights : array-like, optional
         Feature importance weights
-    target : int, optional
+    target_class : int, optional
         Target class for counterfactual
     theta : float, default=0.51
         Minimum confidence threshold
@@ -466,7 +902,7 @@ def compare_confetti_implementations(
     model,
     reference_data,
     reference_labels=None,
-    target=None,
+    target_class=None,
     theta=0.51,
     max_iterations=100,
     verbose=True
@@ -487,7 +923,7 @@ def compare_confetti_implementations(
         Reference dataset
     reference_labels : array-like, optional
         Labels for reference data
-    target : int, optional
+    target_class : int, optional
         Target class
     theta : float, default=0.51
         Minimum confidence threshold
@@ -518,7 +954,7 @@ def compare_confetti_implementations(
         model=model,
         reference_data=reference_data,
         reference_labels=reference_labels,
-        target=target,
+        target_class=target_class,
         theta=theta,
         max_iterations=max_iterations,
         verbose=verbose
@@ -542,7 +978,7 @@ def compare_confetti_implementations(
             model=model,
             reference_data=reference_data,
             reference_labels=reference_labels,
-            target=target,
+            target_class=target_class,
             theta=theta,
             verbose=verbose
         )
@@ -572,9 +1008,9 @@ def compare_confetti_implementations(
             print("✓ Simplified implementation: SUCCESS")
             if pred_simple is not None:
                 print(f"  - Predicted class: {np.argmax(pred_simple)}")
-                if target is not None:
-                    print(f"  - Target class: {target}")
-                print(f"  - Confidence in target: {pred_simple[target] if target is not None else 'N/A':.4f}")
+                if target_class is not None:
+                    print(f"  - Target class: {target_class}")
+                print(f"  - Confidence in target_class: {pred_simple[target_class] if target_class is not None else 'N/A':.4f}")
     else:
         if verbose:
             print("✗ Simplified implementation: FAILED")

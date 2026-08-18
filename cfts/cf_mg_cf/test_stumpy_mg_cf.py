@@ -142,7 +142,7 @@ def main():
     print("\n[Original Implementation]")
     start_time = time.time()
     cf_original, pred_original = mg_cf_generate(
-        test_sample, dataset, model, motifs=motifs_original, verbose=True
+        test_sample, model, dataset=dataset, motifs=motifs_original, verbose=True
     )
     gen_time_original = time.time() - start_time
     print(f"Time taken: {gen_time_original:.3f} seconds")
@@ -151,7 +151,7 @@ def main():
     print("\n[STUMPY-based Implementation]")
     start_time = time.time()
     cf_stumpy, pred_stumpy = mg_cf_generate_stumpy(
-        test_sample, dataset, model, motifs=motifs_stumpy, verbose=True
+        test_sample, model, dataset=dataset, motifs=motifs_stumpy, verbose=True
     )
     gen_time_stumpy = time.time() - start_time
     print(f"Time taken: {gen_time_stumpy:.3f} seconds")

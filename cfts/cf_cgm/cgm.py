@@ -16,7 +16,7 @@ from torch.optim import Adam
 # This method uses conditional generative models (e.g., conditional VAE/GAN)
 # to generate sparse, in-distribution counterfactual explanations. The approach
 # generates counterfactuals by conditioning a generative model on the desired
-# target prediction, allowing batches of counterfactuals to be generated with
+# target_class prediction, allowing batches of counterfactuals to be generated with
 # a single forward pass.
 #
 # Key features:
@@ -216,9 +216,9 @@ def train_conditional_vae(cvae, dataset, num_classes, num_epochs=50, batch_size=
 # 4. Decoding to get counterfactual in original space
 ####
 def cgm_generate(sample,
-                dataset,
                 model,
-                target=None,
+                target_class=None,
+                dataset=None,
                 latent_dim=16,
                 max_iter=200,
                 lr=0.01,
@@ -229,16 +229,17 @@ def cgm_generate(sample,
                 train_vae=True,
                 verbose=False):
     """Generate counterfactual using Conditional Generative Model.
-    
+
     Args:
         sample: Input time series to generate counterfactual for
-        dataset: Training dataset to train conditional VAE
         model: Classifier model
-        target: Target class for counterfactual
+        target_class: Target class for counterfactual
+        dataset: Training dataset to train conditional VAE. Required unless a
+            pre-trained `cvae` is passed in.
         latent_dim: Dimensionality of latent space
         max_iter: Maximum optimization iterations
         lr: Learning rate for optimization
-        lambda_validity: Weight for validity loss (prediction matching target)
+        lambda_validity: Weight for validity loss (prediction matching target_class)
         lambda_proximity: Weight for proximity loss (distance to original)
         lambda_sparsity: Weight for sparsity loss (L1 regularization)
         cvae: Pre-trained conditional VAE (optional)
@@ -249,8 +250,10 @@ def cgm_generate(sample,
         cf: Generated counterfactual time series
         y_cf: Prediction for counterfactual
     """
+    if dataset is None and cvae is None:
+        raise ValueError("cgm_generate requires either a dataset (to train the VAE) or a pre-trained cvae.")
     device = next(model.parameters()).device
-    
+
     # Convert sample to proper format
     sample_tensor = torch.tensor(sample, dtype=torch.float32, device=device)
     original_shape = sample.shape
@@ -282,12 +285,12 @@ def cgm_generate(sample,
     num_classes = len(y_orig)
     
     # Determine target class
-    if target is None:
+    if target_class is None:
         sorted_indices = np.argsort(y_orig)[::-1]
-        target = int(sorted_indices[1])  # Second most likely class
+        target_class = int(sorted_indices[1])  # Second most likely class
     
     if verbose:
-        print(f"CGM: Original class {label_orig}, Target class {target}")
+        print(f"CGM: Original class {label_orig}, Target class {target_class}")
     
     # Initialize or train conditional VAE
     if cvae is None and train_vae:
@@ -300,7 +303,7 @@ def cgm_generate(sample,
         if verbose:
             print("CGM: No VAE provided and train_vae=False, using simple optimization")
         # Fallback to direct optimization without VAE
-        return cgm_generate_simple(sample, dataset, model, target, max_iter, 
+        return cgm_generate_simple(sample, model, target_class, dataset, max_iter,
                                   lr, lambda_proximity, verbose)
     
     cvae.to(device).eval()
@@ -318,7 +321,7 @@ def cgm_generate(sample,
     
     # Target condition (one-hot encoded target class)
     c_target = torch.zeros(1, num_classes, device=device)
-    c_target[0, target] = 1.0
+    c_target[0, target_class] = 1.0
     
     optimizer = Adam([z_cf], lr=lr)
     ce_loss_fn = nn.CrossEntropyLoss()
@@ -330,7 +333,7 @@ def cgm_generate(sample,
     for iteration in range(max_iter):
         optimizer.zero_grad()
         
-        # Decode latent with target condition
+        # Decode latent with target_class condition
         x_cf_flat = cvae.decode(z_cf, c_target)
         
         # Reshape for model prediction
@@ -349,7 +352,7 @@ def cgm_generate(sample,
         pred_cf = model(x_cf_model)
         
         # Validity loss: Cross-entropy with target class
-        target_tensor = torch.tensor([target], dtype=torch.long, device=device)
+        target_tensor = torch.tensor([target_class], dtype=torch.long, device=device)
         validity_loss = ce_loss_fn(pred_cf, target_tensor)
         
         # Proximity loss: Distance in latent space
@@ -370,7 +373,7 @@ def cgm_generate(sample,
         with torch.no_grad():
             y_cf = detach_to_numpy(pred_cf)[0]
             pred_class = int(np.argmax(y_cf))
-            validity_score = y_cf[target]
+            validity_score = y_cf[target_class]
             
             # Store best candidate
             if validity_score > best_validity or (validity_score == best_validity and loss.item() < best_loss):
@@ -381,11 +384,11 @@ def cgm_generate(sample,
             
             # Debug output
             if verbose and iteration % 50 == 0:
-                print(f"CGM iter {iteration}: pred_class={pred_class}, target={target}, "
+                print(f"CGM iter {iteration}: pred_class={pred_class}, target_class={target_class}, "
                       f"validity={validity_score:.4f}, loss={loss.item():.4f}")
             
-            # Early stopping if target achieved
-            if pred_class == target:
+            # Early stopping if target_class achieved
+            if pred_class == target_class:
                 if verbose:
                     print(f"CGM: Found counterfactual at iteration {iteration}")
                 break
@@ -415,8 +418,8 @@ def cgm_generate(sample,
     
     if verbose:
         final_class = int(np.argmax(y_cf_final))
-        print(f"CGM: Final prediction class={final_class}, target={target}, "
-              f"confidence={y_cf_final[target]:.4f}")
+        print(f"CGM: Final prediction class={final_class}, target_class={target_class}, "
+              f"confidence={y_cf_final[target_class]:.4f}")
     
     return best_cf, y_cf_final
 
@@ -427,14 +430,16 @@ def cgm_generate(sample,
 # Direct optimization in input space with proximity constraint
 ####
 def cgm_generate_simple(sample,
-                       dataset,
                        model,
-                       target=None,
+                       target_class=None,
+                       dataset=None,
                        max_iter=200,
                        lr=0.01,
                        lambda_proximity=0.5,
                        verbose=False):
     """Simple CGM variant without VAE, using direct optimization."""
+    if dataset is None:
+        raise ValueError("cgm_generate_simple requires a dataset to initialize the counterfactual.")
     device = next(model.parameters()).device
     
     # Convert sample to tensor
@@ -455,12 +460,12 @@ def cgm_generate_simple(sample,
     y_orig = detach_to_numpy(model(model_input))[0]
     label_orig = int(np.argmax(y_orig))
     
-    if target is None:
+    if target_class is None:
         sorted_indices = np.argsort(y_orig)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
     if verbose:
-        print(f"CGM Simple: Original class {label_orig}, Target class {target}")
+        print(f"CGM Simple: Original class {label_orig}, Target class {target_class}")
     
     # Initialize counterfactual from a random sample in dataset
     dataset_len = len(dataset)
@@ -493,7 +498,7 @@ def cgm_generate_simple(sample,
         pred_cf = model(x_cf_model)
         
         # Loss
-        target_tensor = torch.tensor([target], dtype=torch.long, device=device)
+        target_tensor = torch.tensor([target_class], dtype=torch.long, device=device)
         validity_loss = ce_loss_fn(pred_cf, target_tensor)
         proximity_loss = torch.norm(x_cf - sample_tensor.flatten(), p=2)
         
@@ -506,7 +511,7 @@ def cgm_generate_simple(sample,
         with torch.no_grad():
             y_cf = detach_to_numpy(pred_cf)[0]
             pred_class = int(np.argmax(y_cf))
-            validity_score = y_cf[target]
+            validity_score = y_cf[target_class]
             
             if validity_score > best_validity:
                 best_validity = validity_score
@@ -516,7 +521,7 @@ def cgm_generate_simple(sample,
                 print(f"CGM Simple iter {iteration}: pred_class={pred_class}, "
                       f"validity={validity_score:.4f}")
             
-            if pred_class == target:
+            if pred_class == target_class:
                 if verbose:
                     print(f"CGM Simple: Found counterfactual at iteration {iteration}")
                 break

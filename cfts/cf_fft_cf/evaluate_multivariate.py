@@ -178,13 +178,13 @@ def main():
     # Define FFT-CF variants (fewer for multivariate due to computational cost)
     variants = [
         ('Nearest Neighbor', 
-         lambda s, d, m, t: fft_nn_cf(s, d, m, t, k=3, verbose=False)),
+         lambda s, d, m, t: fft_nn_cf(s, m, t, d, k=3, verbose=False)),
         
         ('Iterative Refinement', 
-         lambda s, d, m, t: fft_iterative_cf(s, d, m, t, k=3, refine_iterations=20, verbose=False)),
+         lambda s, d, m, t: fft_iterative_cf(s, m, t, d, k=3, refine_iterations=20, verbose=False)),
         
         ('Hybrid Enhanced', 
-         lambda s, d, m, t: fft_hybrid_enhanced_cf(s, d, m, t, k=3, analyze_importance=True, fallback_on_failure=True, verbose=False)),
+         lambda s, d, m, t: fft_hybrid_enhanced_cf(s, m, t, d, k=3, analyze_importance=True, fallback_on_failure=True, verbose=False)),
     ]
     
     results = {}

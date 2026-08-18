@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
+from torch.utils.data import Subset
 
 
 ####
@@ -524,19 +525,31 @@ def counts_generate_counterfactual(sample,
     x_cf_np = detach_to_numpy(best_cf.squeeze(0))  # Remove batch dimension
     y_cf_np = detach_to_numpy(y_final.squeeze(0))
     
-    # Match original sample shape
-    if len(sample.shape) == 1:
-        x_cf_np = x_cf_np.squeeze()
-    elif len(sample.shape) == 2 and sample.shape[0] > sample.shape[1]:
-        x_cf_np = x_cf_np.T
-    
+    # Match original sample shape. The model works in (seq_len, input_dim)
+    # order internally, so x_cf_np is (seq_len, input_dim) here — but this
+    # repo's convention elsewhere is channels-first, (input_dim, seq_len),
+    # e.g. FordA samples are (1, 500). The old `sample.shape[0] >
+    # sample.shape[1]` heuristic assumed 2D samples are always time-first
+    # and silently skipped the transpose for channels-first ones (1 > 500 is
+    # False), returning a (seq_len, input_dim) array the rest of the
+    # pipeline reads as (input_dim, seq_len) — comparing actual shapes
+    # directly instead covers both conventions.
+    sample_shape = np.asarray(sample).shape
+    if x_cf_np.shape != sample_shape:
+        if len(sample_shape) == 1:
+            x_cf_np = x_cf_np.reshape(-1)
+        elif x_cf_np.shape == sample_shape[::-1]:
+            x_cf_np = x_cf_np.T
+        elif x_cf_np.size == np.prod(sample_shape):
+            x_cf_np = x_cf_np.reshape(sample_shape)
+
     return x_cf_np, y_cf_np
 
 
 def counts_cf_with_pretrained_model(sample,
-                                   dataset,
-                                   classifier_model,
-                                   target=None,
+                                   model,
+                                   target_class=None,
+                                   dataset=None,
                                    counts_model=None,
                                    latent_dim=16,
                                    hidden_dim=64,
@@ -550,15 +563,16 @@ def counts_cf_with_pretrained_model(sample,
                                    verbose=False):
     """
     Generate counterfactual using CounTS with automatic model training.
-    
+
     This is a convenience function that handles model creation and training
     if a pre-trained CounTS model is not provided.
-    
+
     Args:
         sample: Original time series
-        dataset: Training dataset for CounTS model
-        classifier_model: Pre-trained classifier (for reference, not used in CounTS)
-        target: Target class (computed if None)
+        model: Trained classifier used to get the original prediction and
+            (if target_class is None) to infer the target class
+        target_class: Target class (computed if None)
+        dataset: Training dataset for CounTS model (required)
         counts_model: Pre-trained CounTS model (trained if None)
         latent_dim: Latent space dimensionality
         hidden_dim: Hidden layer dimensionality
@@ -575,8 +589,10 @@ def counts_cf_with_pretrained_model(sample,
         x_cf: Counterfactual time series
         y_cf: Prediction for counterfactual
     """
-    device = next(classifier_model.parameters()).device
-    
+    if dataset is None:
+        raise ValueError("counts_cf_with_pretrained_model requires a dataset to size/train the CounTS model.")
+    device = next(model.parameters()).device
+
     # Prepare sample
     sample_tensor = torch.tensor(sample, dtype=torch.float32, device=device)
     if len(sample_tensor.shape) == 1:
@@ -586,14 +602,14 @@ def counts_cf_with_pretrained_model(sample,
     
     # Get original prediction from classifier
     with torch.no_grad():
-        y_orig = classifier_model(sample_tensor)
+        y_orig = model(sample_tensor)
         y_orig_np = detach_to_numpy(y_orig)[0]
         original_class = int(np.argmax(y_orig_np))
     
     # Determine target class
-    if target is None:
+    if target_class is None:
         sorted_indices = np.argsort(y_orig_np)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
     # Determine input dimensions from dataset
     x_sample, y_sample = dataset[0]
@@ -649,7 +665,7 @@ def counts_cf_with_pretrained_model(sample,
     x_cf, y_cf = counts_generate_counterfactual(
         sample,
         counts_model,
-        target_class=target,
+        target_class=target_class,
         original_class=original_class,
         max_iter=max_iter,
         lr=lr_cf,
@@ -659,5 +675,152 @@ def counts_cf_with_pretrained_model(sample,
         feasibility_bounds=feasibility_bounds,
         verbose=verbose
     )
-    
+
+    return x_cf, y_cf
+
+
+# Trained CounTSModel cache, keyed by (dataset, classifier, and the
+# hyperparameters that affect training): (id(dataset), id(model), latent_dim,
+# hidden_dim, train_epochs, train_subsample_size) -> trained CounTSModel.
+_COUNTS_MODEL_CACHE = {}
+
+
+def counts_cf_fast(sample,
+                   model,
+                   target_class=None,
+                   dataset=None,
+                   counts_model=None,
+                   latent_dim=16,
+                   hidden_dim=64,
+                   train_epochs=15,
+                   train_subsample_size=300,
+                   max_iter=500,
+                   lr_cf=0.01,
+                   lambda_validity=1.0,
+                   lambda_proximity=0.5,
+                   lambda_actionability=0.1,
+                   feasibility_bounds=None,
+                   verbose=False):
+    """
+    Faster, near-equivalent version of counts_cf_with_pretrained_model().
+
+    counts_cf_with_pretrained_model() trains a brand-new CounTS VAE (encoder +
+    decoder + predictor) from scratch on *every single call*, over the full
+    training set, for `train_epochs` (default 50) epochs — even though
+    nothing about that training depends on the specific query sample. On
+    FordA's 3601-instance training split this took ~2.5 hours per call in
+    testing; the counterfactual optimisation loop itself (`max_iter` latent
+    steps) is a few seconds at most, so that per-call retraining is
+    essentially the entire cost.
+
+    This is faster in two independent ways:
+      1. Trains on a class-balanced subsample of the training set
+         (`train_subsample_size`, default 300) instead of all of it, for
+         fewer epochs (`train_epochs`, default 15 vs. 50) — a deliberate
+         quality/speed trade-off, not a free win like the caching below.
+      2. Caches the trained model per (dataset, model, and the
+         hyperparameters above), so a second query against the same dataset
+         reuses it instead of retraining. This also matches how CounTS is
+         meant to be used per the original paper (fit once, explain many
+         queries) — the per-call retraining in
+         counts_cf_with_pretrained_model() is an artifact of this repo's
+         single-call benchmark harness, not of the algorithm itself.
+
+    Args/Returns: identical to counts_cf_with_pretrained_model(), plus
+    `train_subsample_size` (see above).
+    """
+    if dataset is None and counts_model is None:
+        raise ValueError("counts_cf_fast requires a dataset (to train a CounTS model) or a pre-trained counts_model.")
+    device = next(model.parameters()).device
+
+    sample_tensor = torch.tensor(sample, dtype=torch.float32, device=device)
+    if len(sample_tensor.shape) == 1:
+        sample_tensor = sample_tensor.unsqueeze(0).unsqueeze(0)
+    elif len(sample_tensor.shape) == 2:
+        sample_tensor = sample_tensor.unsqueeze(0)
+
+    with torch.no_grad():
+        y_orig = model(sample_tensor)
+        y_orig_np = detach_to_numpy(y_orig)[0]
+        original_class = int(np.argmax(y_orig_np))
+
+    if target_class is None:
+        sorted_indices = np.argsort(y_orig_np)[::-1]
+        target_class = int(sorted_indices[1])
+
+    cache_key = (id(dataset), id(model), latent_dim, hidden_dim, train_epochs, train_subsample_size)
+    if counts_model is None:
+        counts_model = _COUNTS_MODEL_CACHE.get(cache_key)
+
+    if counts_model is None:
+        x_sample, y_sample = dataset[0]
+        x_sample_tensor = torch.tensor(x_sample, dtype=torch.float32)
+        if len(x_sample_tensor.shape) == 1:
+            seq_len, input_dim = x_sample_tensor.shape[0], 1
+        elif len(x_sample_tensor.shape) == 2:
+            if x_sample_tensor.shape[0] > x_sample_tensor.shape[1]:
+                seq_len, input_dim = x_sample_tensor.shape[0], x_sample_tensor.shape[1]
+            else:
+                seq_len, input_dim = x_sample_tensor.shape[1], x_sample_tensor.shape[0]
+        else:
+            seq_len, input_dim = x_sample_tensor.shape[-1], x_sample_tensor.shape[-2]
+
+        # Class-balanced subsample for training (same pattern as
+        # cf__abstract.abstract.subsample_dataset).
+        labels = np.array([
+            int(np.argmax(y)) if hasattr(y, 'shape') and len(y.shape) > 0 else int(y)
+            for _, y in (dataset[i] for i in range(len(dataset)))
+        ])
+        classes = np.unique(labels)
+        num_classes = len(classes)
+        per_class = max(1, train_subsample_size // num_classes)
+        rng = np.random.RandomState(42)
+        subsample_indices = np.concatenate([
+            rng.choice(np.where(labels == c)[0], size=min(per_class, np.sum(labels == c)), replace=False)
+            for c in classes
+        ])
+        train_subset = Subset(dataset, subsample_indices.tolist())
+
+        if verbose:
+            print(f"CounTS (fast): Training VAE on {len(train_subset)} subsampled instances "
+                  f"for {train_epochs} epochs (first call for this config, will be cached)...")
+
+        counts_model = CounTSModel(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            latent_dim=latent_dim,
+            num_classes=num_classes,
+            seq_len=seq_len
+        ).to(device)
+
+        train_counts_model(
+            counts_model,
+            train_subset,
+            num_epochs=train_epochs,
+            batch_size=32,
+            lr=0.001,
+            beta_recon=1.0,
+            beta_pred=1.0,
+            beta_kl=0.1,
+            verbose=verbose
+        )
+        if verbose:
+            print("CounTS (fast): Model training complete.")
+
+        _COUNTS_MODEL_CACHE[cache_key] = counts_model
+
+    x_cf, y_cf = counts_generate_counterfactual(
+        sample,
+        counts_model,
+        target_class=target_class,
+        original_class=original_class,
+        max_iter=max_iter,
+        lr=lr_cf,
+        lambda_validity=lambda_validity,
+        lambda_proximity=lambda_proximity,
+        lambda_actionability=lambda_actionability,
+        feasibility_bounds=feasibility_bounds,
+        verbose=verbose
+    )
+
     return x_cf, y_cf

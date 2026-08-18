@@ -20,9 +20,10 @@ import time
 import subprocess
 from datetime import datetime
 
-# Add parent directory to path
+# This script lives at the repo root; the example_*.py scripts stay in examples/
 script_path = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, f'{script_path}/../')
+examples_dir = os.path.join(script_path, 'examples')
+sys.path.insert(0, script_path)
 
 # ---------------------------------------------------------------------------
 # Logging – tee stdout/stderr to a file alongside terminal output
@@ -41,7 +42,7 @@ class _Tee:
     def __getattr__(self, name):
         return getattr(self._stream, name)
 
-_log_dir = os.path.join(script_path, 'logs')
+_log_dir = os.path.join(examples_dir, 'logs')
 os.makedirs(_log_dir, exist_ok=True)
 _log_file = os.path.join(_log_dir, 'run_all.log')
 sys.stdout = _Tee(sys.stdout, _log_file)
@@ -133,19 +134,19 @@ def check_requirements():
     
     missing_scripts = []
     for script in required_scripts:
-        script_full_path = os.path.join(script_path, script)
+        script_full_path = os.path.join(examples_dir, script)
         if not os.path.exists(script_full_path):
             missing_scripts.append(script)
             print(f"✗ Missing: {script}")
         else:
             print(f"✓ Found: {script}")
-    
+
     if missing_scripts:
         print(f"\nError: Missing required scripts: {missing_scripts}")
         return False
-    
+
     # Check if models directory exists
-    models_dir = os.path.join(script_path, '..', 'models')
+    models_dir = os.path.join(script_path, 'models')
     if not os.path.exists(models_dir):
         print(f"✓ Models directory will be created: {models_dir}")
     else:
@@ -187,7 +188,7 @@ def main():
     print_header("Script Execution")
     
     for script, description in scripts_to_run:
-        script_full_path = os.path.join(script_path, script)
+        script_full_path = os.path.join(examples_dir, script)
         success, duration, error = run_script(script_full_path, description)
         
         results.append({
@@ -240,15 +241,15 @@ def main():
     ]
     
     for filename in generated_files:
-        filepath = os.path.join(os.path.dirname(script_path), filename)
+        filepath = os.path.join(script_path, filename)
         if os.path.exists(filepath):
             file_size = os.path.getsize(filepath)
             print(f"✓ {filename} ({file_size/1024:.1f} KB)")
         else:
             print(f"✗ {filename} (not found)")
-    
+
     # Check for model files
-    models_dir = os.path.join(script_path, '..', 'models')
+    models_dir = os.path.join(script_path, 'models')
     if os.path.exists(models_dir):
         model_files = [f for f in os.listdir(models_dir) if f.endswith('.pth')]
         if model_files:
@@ -265,6 +266,7 @@ def main():
     else:
         print_header(f"⚠️  {len(results) - successful_count} SCRIPTS FAILED")
         return 1
+
 
 if __name__ == "__main__":
     exit_code = main()

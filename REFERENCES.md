@@ -13,20 +13,26 @@ This document provides comprehensive references for all counterfactual explanati
   - [Segment-Based Methods](#segment-based-methods)
   - [Hybrid Methods](#hybrid-methods)
 - [Evaluation Metrics References](#evaluation-metrics-references)
-- [Evaluation Metrics References](#evaluation-metrics-references)
 - [Related Surveys and Reviews](#related-surveys-and-reviews)
 
 ---
 
 ## Quick Usage Example
 
+Every counterfactual-generating function in this library shares the same
+leading argument order: `(sample, model, target_class=None, dataset=None,
+...algorithm-specific parameters...)`. `target_class` and `dataset` are always
+keyword-friendly (pass them by name); a handful of methods need a raw
+`(X_train, y_train)` pair or a `reference_data` array instead of a `dataset`
+object where noted in their own section below.
+
 ```python
 import numpy as np
 import torch
-from cfts.cf_wachter import wachter_genetic_cf
-from cfts.cf_native_guide import native_guide_uni_cf
-from cfts.cf_comte import comte_generate
-from cfts.cf_tsevo import tsevo_cf
+from cfts.cf_wachter.wachter import wachter_genetic_cf
+from cfts.cf_native_guide.native_guide import native_guide_uni_cf
+from cfts.cf_comte.comte import comte_cf
+from cfts.cf_tsevo.tsevo import tsevo_cf
 from cfts.metrics import l2_distance, prediction_change
 
 # Load your model and data
@@ -34,22 +40,23 @@ from cfts.metrics import l2_distance, prediction_change
 # sample = ... (time series to explain)
 # dataset = ... (dataset object)
 
-# Generate counterfactuals using different methods
+# Every method in this library follows the same argument order:
+#   (sample, model, target_class=None, dataset=None, ...algorithm-specific...)
 cf_wachter, pred_wachter = wachter_genetic_cf(
-    sample, model, step_size=0.1, max_iterations=1000
+    sample, model, target_class=1, step_size=0.1, max_steps=1000
 )
 
 cf_native, pred_native = native_guide_uni_cf(
-    sample, dataset, model, k=5
+    sample, model, target_class=1, dataset=dataset
 )
 
-cf_comte, pred_comte = comte_generate(
-    sample, model, target_class=1, lambda_val=0.1
+cf_comte, pred_comte = comte_cf(
+    sample, model, target_class=1, dataset=dataset
 )
 
 cf_tsevo, pred_tsevo = tsevo_cf(
-    sample, dataset, model, target_class=1, 
-    pop_size=50, n_generations=100
+    sample, model, target_class=1, dataset=dataset,
+    population_size=50, generations=100
 )
 
 # Evaluate counterfactual quality
@@ -93,23 +100,24 @@ print(f"Validity: {validity}, Proximity: {proximity}")
 
 **Usage Example:**
 ```python
-from cfts.cf_wachter import wachter_genetic_cf, wachter_gradient_cf
+from cfts.cf_wachter.wachter import wachter_genetic_cf, wachter_gradient_cf
 
 # Genetic algorithm variant
 cf, prediction = wachter_genetic_cf(
     sample=sample,
     model=model,
+    target_class=1,
     step_size=0.1,
-    max_iterations=1000,
-    target_class=1
+    max_steps=1000
 )
 
-# Gradient-based variant
+# Gradient-based variant (needs a dataset to seed the candidate, unless full_random=True)
 cf, prediction = wachter_gradient_cf(
     sample=sample,
     model=model,
-    learning_rate=0.01,
-    max_iterations=500
+    target_class=1,
+    dataset=dataset,
+    max_cfs=500
 )
 ```
 
@@ -142,15 +150,25 @@ cf, prediction = wachter_gradient_cf(
 
 **Usage Example:**
 ```python
-from cfts.cf_comte import comte_generate
+from cfts.cf_comte.comte import comte_cf, comte_cf_gradient
 
-cf, prediction = comte_generate(
+# Feature-wise (per-channel) distractor-swap search
+cf, prediction = comte_cf(
     sample=sample,
     model=model,
     target_class=1,
-    lambda_val=0.1,
-    max_iterations=1000,
-    learning_rate=0.01
+    dataset=dataset,
+    n_segments=10,
+)
+
+# Gradient-based variant
+cf, prediction = comte_cf_gradient(
+    sample=sample,
+    model=model,
+    target_class=1,
+    dataset=dataset,
+    learning_rate=0.1,
+    max_iterations=3000,
 )
 ```
 
@@ -169,9 +187,9 @@ from cfts.cf_tscf import tscf_cf
 
 cf, prediction = tscf_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
+    dataset=dataset,
     lambda_l1=0.01,
     lambda_l2=0.01,
     lambda_smooth=0.001,
@@ -222,9 +240,9 @@ from cfts.cf_ts_tweaking.ts_tweaking import (
 # Global tweaking via k-NN with k-means
 cf, prediction = ts_tweaking_knn_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
-    target=1,
+    target_class=1,
+    dataset=dataset,
     k=5,
     n_clusters=5,
     alpha_steps=20
@@ -233,17 +251,17 @@ cf, prediction = ts_tweaking_knn_cf(
 # Local irreversible tweaking (shapelet-based)
 cf, prediction = ts_tweaking_irreversible_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
-    target=1
+    target_class=1,
+    dataset=dataset
 )
 
 # Local reversible tweaking (shapelet-based, conservative)
 cf, prediction = ts_tweaking_reversible_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
-    target=1
+    target_class=1,
+    dataset=dataset
 )
 ```
 
@@ -285,7 +303,6 @@ from cfts.cf_fft_cf import fft_cf, fft_gradient_cf
 # Greedy search variant with amplitude modification
 cf, prediction = fft_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
     frequency_bands="all",  # "all", "low", "high", "mid"
@@ -298,7 +315,6 @@ cf, prediction = fft_cf(
 # Gradient-based optimization variant
 cf, prediction = fft_gradient_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
     learning_rate=0.01,
@@ -338,16 +354,26 @@ cf, prediction = fft_gradient_cf(
 
 **Usage Example:**
 ```python
-from cfts.cf_dandl import dandl_generate
+from cfts.cf_dandl.dandl import moc_cf, moc_cf_diverse
 
-# Returns multiple Pareto-optimal counterfactuals
-counterfactuals = dandl_generate(
+# Single counterfactual
+cf, prediction = moc_cf(
     sample=sample,
     model=model,
     target_class=1,
-    pop_size=100,
-    n_generations=200,
+    dataset=dataset,
+    population_size=100,
+    generations=200,
     mutation_rate=0.1
+)
+
+# Multiple diverse Pareto-optimal counterfactuals
+cfs, preds, metrics = moc_cf_diverse(
+    sample=sample,
+    model=model,
+    target_class=1,
+    dataset=dataset,
+    n_counterfactuals=5
 )
 ```
 
@@ -385,13 +411,13 @@ from cfts.cf_tsevo import tsevo_cf
 
 cf, prediction = tsevo_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
-    pop_size=50,
-    n_generations=100,
-    crossover_prob=0.7,
-    mutation_prob=0.3
+    dataset=dataset,
+    population_size=50,
+    generations=100,
+    crossover_rate=0.7,
+    mutation_rate=0.3
 )
 ```
 
@@ -423,16 +449,16 @@ cf, prediction = tsevo_cf(
 
 **Usage Example:**
 ```python
-from cfts.cf_multispace import multispace_cf
+from cfts.cf_multispace.multispace import multispace_cf
 
 cf, prediction = multispace_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
-    pop_size=100,
-    n_generations=150,
-    use_saliency=True
+    dataset=dataset,
+    population_size=100,
+    grouped_iter=75,
+    pruning_iter=25
 )
 ```
 
@@ -459,16 +485,135 @@ cf, prediction = multispace_cf(
 
 **Usage Example:**
 ```python
-from cfts.cf_subspace import subspace_cf
+from cfts.cf_subspace.subspace import subspace_cf
 
 cf, prediction = subspace_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
-    pop_size=100,
-    n_generations=150,
-    window_sizes=[5, 10, 20]
+    dataset=dataset,
+    population_size=100,
+    max_iter=100
+)
+```
+
+---
+
+#### 9. CONFETTI - COuNterfactual Explanations For Time Series (2026)
+**Implementation:** `cfts/cf_confetti/confetti.py` (+ `cfts/cf_confetti/confetti_bridge.py` to run the official package)
+
+**Description:** Combines Nearest Unlike Neighbor (NUN) search with subsequence replacement and multi-objective evolutionary optimization to produce sparse, realistic, confidence-increasing counterfactuals for multivariate time series. This repository ships two from-scratch implementations — `confetti_genetic_cf` (lightweight single-objective genetic search) and `confetti_nsga_cf` (closer to the official mechanism: confidence-gated NUN search, a contiguous replacement window found via binary search, and genuine multi-objective NSGA-II optimization) — plus `confetti_package_cf` / `confetti_bridge.py`, which drive the official Rust-accelerated `confetti-ts` package (NSGA-III) out-of-process, since it requires Python >= 3.12 and can't share an interpreter with the rest of this repository.
+
+**Key Features:**
+- **Confidence-gated NUN search**: candidates must clear a minimum confidence threshold `theta` in their own predicted class
+- **Contiguous window search**: binary search over the replacement window size before optimizing within it
+- **Multi-objective optimization**: confidence, sparsity, and proximity objectives (NSGA-III in the official package; NSGA-II reimplemented here in pure NumPy)
+- **Model-agnostic**: works with PyTorch, Keras, or scikit-learn classifiers
+- **Official-package bridge**: `confetti_bridge.py` runs `confetti-ts` in a separate Python >= 3.12 subprocess/venv and exchanges data via `.npy` files, so results can be directly compared against this repo's reimplementations
+
+**Reference:**
+```bibtex
+@inproceedings{cetina2026counterfactual,
+  title={Counterfactual Explainable AI (XAI) Method for Deep Learning-Based Multivariate Time Series Classification},
+  author={Cetina, Alan Gabriel Paredes and Benguessoum, Kaouther and Lourenco, Raoni and Kubler, Sylvain},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={40},
+  number={21},
+  pages={17393--17400},
+  year={2026}
+}
+```
+
+**Links:**
+- Paper (arXiv preprint): [arXiv:2511.13237](https://arxiv.org/html/2511.13237v2)
+- Repository: [https://github.com/serval-uni-lu/confetti](https://github.com/serval-uni-lu/confetti)
+- PyPI package: [confetti-ts](https://pypi.org/project/confetti-ts/)
+
+**Usage Example:**
+```python
+from cfts.cf_confetti.confetti import confetti_genetic_cf, confetti_nsga_cf
+
+# Lightweight genetic-search reimplementation
+cf, prediction = confetti_genetic_cf(
+    sample=sample,
+    model=model,
+    reference_data=reference_data,
+    theta=0.51,
+    population_size=50,
+    max_iterations=100,
+)
+
+# Closer NSGA-II reimplementation of the official mechanism
+cf, prediction = confetti_nsga_cf(
+    sample=sample,
+    model=model,
+    dataset=dataset,
+    target_class=1,
+    theta=0.51,
+    alpha=0.5,
+    population_size=60,
+    max_generations=40,
+)
+```
+
+---
+
+#### 10. FastPACE - Fast PlAnning of Counterfactual Explanations for Time Series Classification (2026)
+**Implementation:** `cfts/cf_fastpace/fastpace.py`
+
+**Description:** Casts counterfactual generation as an episodic Markov Decision Process (MDP) over NUN-replacement masks and solves it with hierarchical, block-based Cross-Entropy Method (CEM) planning (Model Predictive Control). Every trajectory starts at the Nearest Unlike Neighbor — already valid by construction — and is progressively refined back toward the query, guaranteeing validity by design.
+
+**Key Features:**
+- **MDP formulation**: state is a binary replacement mask between query and NUN; actions flip mask entries
+- **Model Predictive Control**: plans a finite-horizon action sequence with the Cross-Entropy Method at every step, executes only the first action, then replans
+- **Coarse-to-fine block granularity**: actions operate on contiguous time-step blocks combined with clusters of similarly-behaving channels, refined across granularity levels
+- **Guaranteed validity**: since trajectories start at the valid NUN, the last valid mask found along the way is always returned
+- **Plausibility term**: Increase-in-Outlier-Score (IOS) from a dedicated reconstruction autoencoder discourages out-of-distribution counterfactuals
+- **Shared objective family**: reuses Sub-SpaCE/Multi-SpaCE's weighted combination of adversarial, sparsity, contiguity, and plausibility terms
+
+**Reference:**
+```bibtex
+@article{refoyo2026fastpace,
+  title={FastPACE: Fast PlAnning of Counterfactual Explanations for Time Series Classification},
+  author={Refoyo, Mario and Boleas, Yago and Luengo, David},
+  journal={Data Mining and Knowledge Discovery},
+  year={2026},
+  publisher={Springer},
+  doi={10.1007/s10618-026-01242-7}
+}
+```
+
+**Links:**
+- Paper: [DOI:10.1007/s10618-026-01242-7](https://doi.org/10.1007/s10618-026-01242-7)
+- Preprint: [Research Square](https://doi.org/10.21203/rs.3.rs-8611408/v1)
+- Repository: [https://github.com/MarioRefoyo/FastPACE](https://github.com/MarioRefoyo/FastPACE)
+
+**Usage Example:**
+```python
+from cfts.cf_fastpace import fastpace_cf, train_plausibility_autoencoder
+
+cf, prediction = fastpace_cf(
+    sample=sample,
+    model=model,
+    target_class=1,
+    dataset=dataset,
+    horizon=3,
+    cem_iterations=3,
+    elite_fraction=0.1,
+    alpha=0.1,   # adversarial weight
+    beta=0.3,    # sparsity weight
+    eta=0.4,     # contiguity weight
+    lam=0.2,     # plausibility weight
+    max_reference_samples=300,
+    verbose=True,
+)
+
+# Reuse a pre-trained plausibility autoencoder across many samples instead of
+# retraining it inside every fastpace_cf call
+autoencoder, ae_max_error = train_plausibility_autoencoder(train_ts, device, epochs=20)
+cf, prediction = fastpace_cf(
+    sample=sample, model=model, target_class=1, dataset=dataset,
+    autoencoder=autoencoder, ae_max_error=ae_max_error,
 )
 ```
 
@@ -476,7 +621,7 @@ cf, prediction = subspace_cf(
 
 ### Instance-Based Methods
 
-#### 9. Native Guide (2021)
+#### 11. Native Guide (2021)
 **Implementation:** `cfts/cf_native_guide/native_guide.py`
 
 **Description:** Instance-based counterfactual generation using nearest neighbor search and gradient attribution (GradientShap) to preserve important temporal patterns.
@@ -503,38 +648,30 @@ cf, prediction = subspace_cf(
 
 **Usage Example:**
 ```python
-from cfts.cf_native_guide import native_guide_uni_cf, native_guide_multi_cf
+from cfts.cf_native_guide.native_guide import native_guide_uni_cf
 
-# Univariate time series
+# Works for both univariate and multivariate time series -- shape is
+# inferred from `sample` (accepts 1-D, (C, L), or (L, C))
 cf, prediction = native_guide_uni_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
-    k=5,  # number of nearest neighbors
-    target_class=1
-)
-
-# Multivariate time series
-cf, prediction = native_guide_multi_cf(
-    sample=sample,
-    dataset=dataset,
-    model=model,
-    k=5
+    target_class=1,
+    dataset=dataset
 )
 ```
 
 ---
 
-#### 10. CELS & M-CELS - Counterfactual Explanations via Learned Saliency (2023-2024)
+#### 12. CELS & M-CELS - Counterfactual Explanations via Learned Saliency (2023-2024)
 **Implementation:** `cfts/cf_cels/cels.py`
 
-**Description:** Learns saliency maps to identify important time steps and generates counterfactuals through nearest unlike neighbor replacement. Supports both univariate (CELS) and multivariate (M-CELS) time series with automatic selection via AutoCELS.
+**Description:** Learns saliency maps to identify important time steps and generates counterfactuals through nearest unlike neighbor replacement. Supports both univariate (CELS) and multivariate (M-CELS) time series with automatic selection via `cels_auto`.
 
 **Key Features:**
 - **Learned saliency maps**: Identifies important time steps contributing to predictions
 - **Nearest unlike neighbor (NUN)**: Finds target class instances for replacement
 - **Optimization-based learning**: Balances validity, sparsity, and temporal coherence
-- **AutoCELS wrapper**: Automatically selects between CELS/M-CELS based on dimensionality
+- **`cels_auto` wrapper**: Automatically selects between CELS/M-CELS based on dimensionality
 - **High sparsity**: Modifies only salient time steps for minimal perturbations
 - **Temporal regularization**: Ensures smooth, contiguous explanations
 
@@ -586,7 +723,7 @@ cf, prediction = native_guide_multi_cf(
 
 **Usage Example:**
 ```python
-from cfts.cf_cels import cels_generate, mcels_generate
+from cfts.cf_cels.cels import cels_generate, m_cels_generate, cels_auto
 
 # Univariate CELS
 cf, prediction = cels_generate(
@@ -594,7 +731,7 @@ cf, prediction = cels_generate(
     model=model,
     X_train=X_train,
     y_train=y_train,
-    target=1,
+    target_class=1,
     learning_rate=0.01,
     max_iter=100,
     lambda_valid=1.0,
@@ -603,12 +740,12 @@ cf, prediction = cels_generate(
 )
 
 # Multivariate M-CELS
-cf, prediction = mcels_generate(
+cf, prediction = m_cels_generate(
     sample=sample,
     model=model,
     X_train=X_train,
     y_train=y_train,
-    target=1,
+    target_class=1,
     learning_rate=0.01,
     max_iter=100,
     lambda_valid=1.0,
@@ -616,16 +753,19 @@ cf, prediction = mcels_generate(
     lambda_smoothness=0.1
 )
 
-# AutoCELS (automatic selection)
-from cfts.cf_cels import AutoCELS
-
-explainer = AutoCELS(model)
-cf = explainer.generate(sample, target_class, X_train, y_train)
+# cels_auto: automatically picks CELS vs M-CELS based on input dimensionality
+cf, prediction = cels_auto(
+    sample=sample,
+    model=model,
+    X_train=X_train,
+    y_train=y_train,
+    target_class=1
+)
 ```
 
 ---
 
-#### 11. AB-CF - Attention-Based Counterfactual Explanation (2023)
+#### 13. AB-CF - Attention-Based Counterfactual Explanation (2023)
 **Implementation:** `cfts/cf_ab_cf/ab_cf.py`
 
 **Description:** Uses Shannon entropy-based attention mechanism to identify and replace high-uncertainty subsequences with segments from nearest unlike neighbors (NUN), creating sparse and interpretable counterfactual explanations for multivariate time series classification.
@@ -671,7 +811,7 @@ cf = explainer.generate(sample, target_class, X_train, y_train)
 
 **Usage Example:**
 ```python
-from cfts.cf_ab_cf import ab_cf_generate
+from cfts.cf_ab_cf.ab_cf import ab_cf_generate
 
 # Generate AB-CF counterfactual
 cf, cf_label = ab_cf_generate(
@@ -698,9 +838,55 @@ cf, cf_label = ab_cf_generate(
 
 ---
 
+#### 14. IMFACT - Counterfactual Explanations for Time Series via Intrinsic Mode Function Substitution (2026)
+**Implementation:** `cfts/cf_imfact/imfact.py`
+
+**Description:** Counterfactual method that decomposes both the query and a native-guide (NUN) reference into Intrinsic Mode Functions (IMFs) via Empirical Mode Decomposition, then iteratively interpolates the query toward the guide in IMF/frequency space rather than raw amplitude space. This avoids the temporal-structure damage that perturbing raw feature space can cause. Several IMF-selection strategies control which modes are nudged first (by PSD distance, class-level variance, extremes, or a coarse-to-fine unlocking schedule), and multiple native guides can be cycled through during the search.
+
+**Key Features:**
+- **EMD/sifting decomposition**: extracts Intrinsic Mode Functions per channel with Rilling (2003) boundary padding and B-spline envelopes
+- **Four IMF-weighting strategies**: `distance` (Jensen-Shannon divergence between interpolated/target IMF power spectra), `variance` (class-level PSD variance), `extremes` (only the most/least distant IMFs), `coarse_to_fine` (progressively unlocks IMFs)
+- **Multi-guide support**: `n_nuns > 1` cycles through several native guides (`cycle` or `closest_psd` switching)
+- **Frequency-domain interpolation**: modifies IMF composition rather than raw amplitudes, aiming to preserve temporal/spectral structure
+- **Trace utility**: `trace_imfact_variant_path` records the per-iteration interpolation path for a single variant
+
+**Reference:**
+```bibtex
+@inproceedings{schlegel2026imfact,
+  title={IMFACT: Counterfactual Explanations for Time Series via Intrinsic Mode Function Substitution},
+  author={Schlegel, Udo and Rakuschek, Julian and Seidl, Thomas and Holzinger, Andreas and Schreck, Tobias and Del Ser, Javier},
+  booktitle={XKDD Workshop, ECML-PKDD 2026},
+  year={2026}
+}
+```
+
+**Links:**
+- Paper: [arXiv:2608.04777](https://arxiv.org/abs/2608.04777)
+- Venue: XKDD Workshop at ECML-PKDD 2026
+
+**Usage Example:**
+```python
+from cfts.cf_imfact.imfact import imfact_cf
+
+cf, prediction = imfact_cf(
+    sample=sample,
+    model=model,
+    dataset=dataset,
+    target_class=1,
+    method="distance",       # "distance", "variance", "extremes", "coarse_to_fine"
+    step=0.05,
+    max_iter=200,
+    n_nuns=3,
+    nun_switch="cycle",
+    verbose=True,
+)
+```
+
+---
+
 ### Latent Space Methods
 
-#### 12. GLACIER - Guided Locally Constrained Counterfactuals (2024)
+#### 15. GLACIER - Guided Locally Constrained Counterfactuals (2024)
 **Implementation:** `cfts/cf_glacier/glacier.py`
 
 **Description:** Advanced counterfactual generation with enhanced realism constraints, similarity preservation, and robust optimization for complex time series patterns using latent space representations.
@@ -727,22 +913,22 @@ cf, cf_label = ab_cf_generate(
 
 **Usage Example:**
 ```python
-from cfts.cf_glacier import glacier_cf
+from cfts.cf_glacier.glacier import glacier_cf
 
 cf, prediction = glacier_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
-    lambda_l1=0.01,
-    lambda_l2=0.1,
+    dataset=dataset,
+    lambda_sparse=0.1,
+    lambda_proximity=1.0,
     max_iterations=2000
 )
 ```
 
 ---
 
-#### 13. CGM - Conditional Generative Models for Counterfactuals (2021)
+#### 16. CGM - Conditional Generative Models for Counterfactuals (2021)
 **Implementation:** `cfts/cf_cgm/cgm.py`
 
 **Description:** Uses conditional generative models (e.g., conditional VAE/GAN) to generate sparse, in-distribution counterfactual explanations. The approach generates counterfactuals by conditioning a generative model on the desired target prediction, allowing batches of counterfactuals to be generated with a single forward pass.
@@ -779,36 +965,33 @@ cf, prediction = glacier_cf(
 
 **Usage Example:**
 ```python
-from cfts.cf_cgm import cgm_generate
+from cfts.cf_cgm.cgm import cgm_generate, ConditionalVAE, train_conditional_vae
 
-# Train conditional VAE on dataset
-from cfts.cf_cgm import ConditionalVAE, train_conditional_vae
-
-cvae = train_conditional_vae(
-    X_train=X_train,
-    y_train=y_train,
-    input_dim=input_dim,
-    num_classes=num_classes,
-    latent_dim=16,
-    epochs=50
-)
-
-# Generate counterfactual
+# Simplest path: cgm_generate trains the conditional VAE on-the-fly from `dataset`
 cf, prediction = cgm_generate(
     sample=sample,
     model=model,
-    conditional_vae=cvae,
     target_class=1,
-    learning_rate=0.01,
-    max_iterations=500,
-    lambda_proximity=0.1,
+    dataset=dataset,
+    latent_dim=16,
+    lr=0.01,
+    max_iter=500,
+    lambda_proximity=0.5,
     lambda_sparsity=0.01
+)
+
+# Or pre-train once and reuse the VAE across many samples
+cvae = ConditionalVAE(input_dim=input_dim, num_classes=num_classes, latent_dim=16)
+cvae = train_conditional_vae(cvae, dataset, num_classes, num_epochs=50)
+cf, prediction = cgm_generate(
+    sample=sample, model=model, target_class=1,
+    cvae=cvae, train_vae=False
 )
 ```
 
 ---
 
-#### 14. CounTS - Counterfactual Time Series (2023)
+#### 17. CounTS - Counterfactual Time Series (2023)
 **Implementation:** `cfts/cf_counts/counts.py`
 
 **Description:** Self-interpretable time series prediction model with counterfactual explanations. Unlike post-hoc methods, CounTS is built on a structural causal model (SCM) that performs counterfactual reasoning through abduction, action, and prediction steps for causally plausible explanations.
@@ -846,33 +1029,33 @@ cf, prediction = cgm_generate(
 
 **Usage Example:**
 ```python
-from cfts.cf_counts import counts_generate, CounTS
+from cfts.cf_counts.counts import counts_cf_with_pretrained_model, CounTSModel, train_counts_model, counts_generate_counterfactual
 
-# Train CounTS model
-counts_model = CounTS(
-    input_dim=input_dim,
-    hidden_dim=64,
+# Simplest path: trains a CounTS model on-the-fly from `dataset`
+cf, prediction = counts_cf_with_pretrained_model(
+    sample=sample,
+    model=model,       # the classifier being explained (used for the original prediction)
+    target_class=1,
+    dataset=dataset,
     latent_dim=16,
-    num_classes=num_classes
+    hidden_dim=64,
+    train_epochs=50
 )
 
-# Train on dataset
-train_counts_model(counts_model, X_train, y_train, epochs=50)
-
-# Generate counterfactual via intervention
-cf, prediction = counts_generate(
-    sample=sample,
-    counts_model=counts_model,
-    target_class=1,
-    intervention_type='latent',  # 'latent' or 'time'
-    intervention_strength=0.5,
-    max_iterations=100
+# Or pre-train once and reuse the CounTS model across many samples
+counts_model = CounTSModel(
+    input_dim=input_dim, hidden_dim=64, latent_dim=16,
+    num_classes=num_classes, seq_len=seq_len
+)
+counts_model = train_counts_model(counts_model, dataset, num_epochs=50)
+cf, prediction = counts_generate_counterfactual(
+    sample=sample, counts_model=counts_model, target_class=1
 )
 ```
 
 ---
 
-#### 15. Latent-CF - Latent Space Counterfactuals (2020)
+#### 18. Latent-CF - Latent Space Counterfactuals (2020)
 **Implementation:** `cfts/cf_latent_cf/latent_cf.py`
 
 **Description:** Simple autoencoder-based approach that projects time series into latent space, optimizes in latent space, then projects back to original space for improved efficiency and interpretability. This method uses gradient descent in the latent space of an autoencoder to generate counterfactuals that are more in-distribution, sparse, and computationally efficient.
@@ -899,22 +1082,23 @@ cf, prediction = counts_generate(
 
 **Usage Example:**
 ```python
-from cfts.cf_latent_cf import latent_cf_generate
+from cfts.cf_latent_cf.latent_cf import latent_cf_generate
 
 cf, prediction = latent_cf_generate(
     sample=sample,
     model=model,
-    latent_dim=16,
     target_class=1,
-    learning_rate=0.01,
-    max_iterations=1000,
-    pretrained_autoencoder=None  # or provide pre-trained model
+    dataset=dataset,   # required unless a pre-trained `autoencoder` is passed
+    latent_dim=8,
+    lr=0.01,
+    max_iter=1000,
+    autoencoder=None  # or provide a pre-trained autoencoder to skip training
 )
 ```
 
 ---
 
-#### 16. LASTS - Local Agnostic Subsequence-based Time Series Explainer (2020)
+#### 19. LASTS - Local Agnostic Subsequence-based Time Series Explainer (2020)
 **Implementation:** `cfts/cf_lasts/lasts.py`
 
 **Description:** Comprehensive explainability method that provides factual and counterfactual subsequence-based rules, exemplar and counterexemplar time series, and shapelet-based decision tree explanations. LASTS uses an autoencoder to project time series into latent space, generates a neighborhood using genetic algorithms, trains a shapelet-based decision tree surrogate model, and extracts interpretable rules and exemplar/counterexemplar instances.
@@ -953,14 +1137,14 @@ cf, prediction = latent_cf_generate(
 
 **Usage Example:**
 ```python
-from cfts.cf_lasts import lasts_cf, LASTS
+from cfts.cf_lasts.lasts import lasts_cf, LASTS
 
 # Simple counterfactual generation
 cf, prediction = lasts_cf(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
+    dataset=dataset,
     latent_dim=32,
     n_samples=500,
     n_iterations=100,
@@ -993,7 +1177,7 @@ print(f"Closest counterfactual: {explanation['closest_counterfactual']}")
 
 ### Segment-Based Methods
 
-#### 17. SETS - Shapelet-Based Counterfactual Explanations (2022)
+#### 20. SETS - Shapelet-Based Counterfactual Explanations (2022)
 **Implementation:** `cfts/cf_sets/sets.py`  
 **Paper:** "Shapelet-Based Counterfactual Explanations for Multivariate Time Series"  
 **Authors:** Omar Bahri, Soukaina Filali Boubrahimi, Shah Muhammad Hamdi  
@@ -1019,14 +1203,14 @@ print(f"Closest counterfactual: {explanation['closest_counterfactual']}")
 
 **Usage Example:**
 ```python
-from cfts.cf_sets import sets_cf, sets_explain
+from cfts.cf_sets.sets import sets_cf, sets_explain
 
 # Basic counterfactual generation
 cf, prediction = sets_cf(
     sample=ts_sample,
-    dataset=train_dataset,
     model=trained_model,
     target_class=1,
+    dataset=train_dataset,
     n_shapelets_per_class=5,
     shapelet_lengths=[5, 10, 20],
     threshold=0.5,
@@ -1036,9 +1220,9 @@ cf, prediction = sets_cf(
 # Detailed explanation with shapelet information
 explanation = sets_explain(
     sample=ts_sample,
-    dataset=train_dataset,
     model=trained_model,
-    target_class=1
+    target_class=1,
+    dataset=train_dataset
 )
 ```
 
@@ -1055,7 +1239,7 @@ explanation = sets_explain(
 
 ---
 
-#### 18. SG-CF - Shapelet-Guided Counterfactual Explanations (2022)
+#### 21. SG-CF - Shapelet-Guided Counterfactual Explanations (2022)
 **Implementation:** `cfts/cf_sg_cf/sg_cf.py`  
 **Paper:** "SG-CF: Shapelet-Guided Counterfactual Explanation for Time Series Classification"  
 **Authors:** Peiyu Li, Omar Bahri, Soukaina Filali Boubrahimi, Shah Muhammad Hamdi  
@@ -1073,18 +1257,16 @@ explanation = sets_explain(
 - **Lambda bisection**: Adaptively balances proximity and validity through lambda tuning
 - **Multi-objective optimization**: Balances validity, proximity, sparsity, and contiguity
 
-```
-
 **Usage Example:**
 ```python
-from cfts.cf_sg_cf import sg_cf, sg_cf_explain
+from cfts.cf_sg_cf.sg_cf import sg_cf, sg_cf_explain
 
 # Basic counterfactual generation
 cf, prediction = sg_cf(
     sample=ts_sample,
-    dataset=train_dataset,
     model=trained_model,
     target_class=1,
+    dataset=train_dataset,
     max_iter=1000,
     max_lambda_steps=10,
     lambda_init=0.1,
@@ -1097,9 +1279,9 @@ cf, prediction = sg_cf(
 # Detailed explanation with shapelet information
 explanation = sg_cf_explain(
     sample=ts_sample,
-    dataset=train_dataset,
     model=trained_model,
     target_class=1,
+    dataset=train_dataset,
     verbose=True
 )
 
@@ -1126,7 +1308,7 @@ print(f"Success: {explanation['success']}")
 
 ---
 
-#### 19. DisCOX - Discord-based Counterfactual Explanations (2024)
+#### 22. DisCOX - Discord-based Counterfactual Explanations (2024)
 **Implementation:** `cfts/cf_discox/discox.py`  
 **Paper:** "Discord-based counterfactual explanations for time series classification"  
 **Authors:** Omar Bahri, Peiyu Li, Soukaina Filali Boubrahimi, Shah Muhammad Hamdi  
@@ -1150,24 +1332,21 @@ from cfts.cf_discox import discox_cf, discox_explain
 # Basic counterfactual generation
 cf, prediction = discox_cf(
     sample=ts_sample,
-    dataset=train_dataset,
     model=trained_model,
     target_class=1,
+    dataset=train_dataset,
     window_size=20,  # or None for automatic (10% of series length)
-    k_discords=3,
-    modification_strategy='prototype',  # 'prototype', 'amplify', 'invert'
-    blend_factor=0.3,
+    max_iterations=100,
     verbose=True
 )
 
 # Detailed explanation with discord information
 explanation = discox_explain(
     sample=ts_sample,
-    dataset=train_dataset,
     model=trained_model,
     target_class=1,
+    dataset=train_dataset,
     window_size=20,
-    k_discords=5,
     verbose=True
 )
 
@@ -1214,7 +1393,7 @@ print(f"Success: {explanation['success']}")
 
 ---
 
-#### 20. CFWoT - Counterfactual Explanations Without Training Datasets (2024)
+#### 23. CFWoT - Counterfactual Explanations Without Training Datasets (2024)
 **Implementation:** `cfts/cf_cfwot/cfwot.py`
 
 **Description:** Reinforcement learning-based counterfactual explanation method for both static and multivariate time-series data. CFWoT operates without requiring training datasets and is model-agnostic, supporting both differentiable and non-differentiable models.
@@ -1256,27 +1435,26 @@ The policy is trained via policy gradient methods (REINFORCE) to maximize reward
 
 **Usage Example:**
 ```python
-from cfts import cfwot
+from cfts.cf_cfwot.cfwot import cfwot
 
 cf, prediction = cfwot(
-    sample=sample,
+    sample=sample,           # shape (K, D) for time series, or (D,) for static
     model=model,
     target_class=1,
-    K=100,  # number of time steps
-    D=5,    # number of features
-    D_C=5,  # number of continuous features
-    D_D=0,  # number of discrete features
-    num_episodes=100,
-    learning_rate=0.001,
-    gamma=0.99,  # discount factor
-    feasibility_weights=None,  # optional feature weights
+    D_act=None,               # actionable feature indices (default: all)
+    W_fsib=None,               # optional per-feature feasibility weights
+    lambda_pxmt=0.001,        # proximity weight in the reward
+    M_E=100,                  # max episodes
+    M_T=100,                  # max interventions per episode
+    gamma=0.99,               # RL discount factor
+    lr=0.0001,
     verbose=True
 )
 ```
 
 ---
 
-#### 21. TS-CEM - Contrastive Explanation Method for Time Series (2020)
+#### 24. TS-CEM - Contrastive Explanation Method for Time Series (2020)
 **Implementation:** `cfts/cf_cem/cem.py`
 
 **Description:** Applies the Contrastive Explanation Method (CEM) to time series classification, finding Pertinent Negatives (PN) that change the model's prediction or Pertinent Positives (PP) that preserve it. Optimization is performed via FISTA with L1/L2 regularization and an optional autoencoder reconstruction loss.
@@ -1346,9 +1524,56 @@ cf, prediction = cem_cf(
 
 ---
 
+#### 25. MASCOTS - Model-Agnostic Symbolic COunterfactual explanations for Time Series (2025)
+**Implementation:** `cfts/cf_mascots/mascots.py`
+
+**Description:** Builds a SAX-based bag-of-receptive-fields (BoRF) symbolic surrogate over the training data, then generates counterfactuals through importance-guided "word swaps" of symbolic subsequences until the surrogate (and underlying model) predictions flip to the target class. Feature importance can come from the surrogate's own linear coefficients or from SHAP values.
+
+**Key Features:**
+- **Symbolic representation**: SAX/BoRF bag-of-words encoding of subsequences at multiple window sizes
+- **Importance-guided swaps**: replaces high-importance symbolic words with alternatives, sampling among the top-k candidates at random for diversity
+- **Multiple restarts**: several independent search restarts for more diverse/robust solutions
+- **Pluggable swap distributions**: scalar swaps by default, or Gaussian-informed swaps when `gpytorch` is available
+- **Model-agnostic**: only requires prediction/probability functions, so it wraps any classifier
+
+**Reference:**
+```bibtex
+@article{pludowski2025mascots,
+  title={MASCOTS: Model-Agnostic Symbolic COunterfactual explanations for Time Series},
+  author={P{\l}udowski, Dawid and Spinnato, Francesco and Wilczy{\'n}ski, Piotr and Kotowski, Krzysztof and Ntagiou, Evridiki V and Guidotti, Riccardo and Biecek, Przemys{\l}aw},
+  journal={arXiv preprint arXiv:2503.22389},
+  year={2025}
+}
+```
+
+**Links:**
+- Paper: [arXiv:2503.22389](https://arxiv.org/abs/2503.22389)
+- Repository: [https://github.com/DawidPludowski/borf](https://github.com/DawidPludowski/borf)
+
+**Usage Example:**
+```python
+from cfts.cf_mascots import mascots_cf
+
+cf, scores = mascots_cf(
+    sample=sample,
+    model=model,
+    dataset=dataset,          # sequence of (x, y) pairs used to build the BoRF surrogate
+    target_class=1,
+    max_iter=100,
+    swap_method="scalar",     # "scalar" or "gaussian" (requires gpytorch)
+    n_restarts=3,
+    C=0.1,
+    select_top_k=5,
+    attribution_name="coef",  # "coef" or "shap"
+    verbose=True,
+)
+```
+
+---
+
 ### Hybrid Methods
 
-#### 23. SPARCE - Generating SPARse Counterfactual Explanations (2022)
+#### 26. SPARCE - Generating SPARse Counterfactual Explanations (2022)
 **Implementation:** `cfts/cf_sparce/sparce.py`
 
 **Description:** GAN-based architecture to generate sparse counterfactual explanations for multivariate time series. The generator creates residuals (modifications) that are added to the input query to produce counterfactuals. The approach regularizes the loss with adversarial, classification, similarity, sparsity, and smoothness (jerk) losses.
@@ -1387,38 +1612,86 @@ cf, prediction = cem_cf(
 
 **Usage Example:**
 ```python
-from cfts.cf_sparce import sparce_generate, train_sparce
+from cfts.cf_sparce.sparce import sparce_gan_cf, sparce_gradient_cf
 
-# Train SPARCE GAN on dataset
-generator, discriminator = train_sparce(
-    X_train=X_train,
-    y_train=y_train,
-    input_dim=input_dim,
-    hidden_dim=64,
-    layer_dim=2,
-    epochs=100,
-    batch_size=32
-)
-
-# Generate sparse counterfactual
-cf, prediction = sparce_generate(
+# GAN variant: trains its own generator/discriminator per call
+cf, prediction = sparce_gan_cf(
     sample=sample,
     model=model,
-    generator=generator,
-    discriminator=discriminator,
     target_class=1,
-    lambda_adv=0.1,
-    lambda_class=1.0,
-    lambda_sim=0.5,
-    lambda_sparse=0.1,
-    lambda_jerk=0.05,
-    max_iterations=500
+    lambda_adv=1.0,
+    lambda_cls=1.0,
+    lambda_sim=1.0,
+    lambda_sparse=1.0,
+    lambda_jerk=1.0,
+    num_epochs=50
+)
+
+# Lighter-weight gradient-optimization variant (no GAN training)
+cf, prediction = sparce_gradient_cf(
+    sample=sample,
+    model=model,
+    target_class=1,
+    lambda_cls=1.0,
+    lambda_sim=1.0,
+    lambda_sparse=1.0,
+    lambda_jerk=1.0,
+    max_iter=100
 )
 ```
 
 ---
 
-#### 24. Time-CF - Shapelet-based Model-agnostic Counterfactual Local Explanations
+#### 27. CFE4MTS - Plausible Conditional Generation-based Counterfactual Explanations for Multivariate Time Series Classification (2025)
+**Implementation:** `cfts/cf_cfe4mts/cfe4mts.py`
+
+**Description:** A conditional, class-generative GAN-style method: a "central noiser" network is trained once per dataset to predict an additive perturbation δ = N(X, y_target) given a query and a one-hot target class, while a "central discriminator" (single-direction LSTM) judges whether (X + δ, y_target) pairs are plausible. Once trained, generating a counterfactual for any (query, target class) pair is a single forward pass — no per-sample optimization. It is a multivariate, class-conditional extension of CFE4SITS.
+
+**Key Features:**
+- **Amortized inference**: one trained noiser generates counterfactuals for any query/target-class pair in a single forward pass
+- **Adversarial + classification + distance losses**: `L_noiser = λ_gen·L_gen + λ_clas·L_cla + λ_dist·L_dist` balances realism, validity, and sparsity/contiguity
+- **Circular-distance sparsity term**: `L_dist` concentrates perturbation mass around a single contiguous window per channel via a circular (mod T) distance to the peak-perturbation time step
+- **Random target sampling during training**: targets are sampled uniformly at random per training instance so the noiser generalizes across all class pairs
+- **Fit/generate split**: `cfe4mts_fit` trains once, `cfe4mts_generate` produces cheap repeated counterfactuals; `cfe4mts_cf` offers a one-shot fit+generate call
+
+**Reference:**
+```bibtex
+@inproceedings{sevellec2025cfe4mts,
+  title={Plausible Conditional Generation-based Counterfactual Explanations for Multivariate Time Series Classification},
+  author={Sevellec, Paul and Fromont, Elisa and Gaudel, Romain and Roze, Laurence and Sammarco, Matteo},
+  booktitle={European Conference on Artificial Intelligence (ECAI)},
+  year={2025}
+}
+```
+
+**Links:**
+- Paper: [HAL preprint](https://hal.science/hal-04928456v2/file/m1254.pdf)
+- Repository: [https://github.com/PaulSevellec/CFE4MTS](https://github.com/PaulSevellec/CFE4MTS)
+
+**Usage Example:**
+```python
+from cfts.cf_cfe4mts.cfe4mts import cfe4mts_cf, cfe4mts_fit, cfe4mts_generate
+
+# One-shot: train a fresh noiser and generate immediately (single sample)
+cf, prediction = cfe4mts_cf(
+    sample=sample,
+    dataset=dataset,
+    model=model,
+    target_class=1,
+    epochs=100,
+    lambda_gen=1.0,
+    lambda_clas=10.0,
+    lambda_dist=0.01,
+)
+
+# Preferred when explaining many samples: fit once, generate cheaply per sample
+fitted = cfe4mts_fit(dataset, model, epochs=100, lambda_clas=10.0, lambda_dist=0.01)
+cf, prediction = cfe4mts_generate(fitted, sample, model, target_class=1)
+```
+
+---
+
+#### 28. Time-CF - Shapelet-based Model-agnostic Counterfactual Local Explanations
 **Implementation:** `cfts/cf_time_cf/time_cf.py`
 
 **Description:** Time-CF leverages shapelets and TimeGAN to provide counterfactual explanations for arbitrary time series classifiers. The method extracts discriminative shapelet candidates using Random Shapelet Transform (RST), trains TimeGAN on instances from other classes (not the to-be-explained class), generates synthetic instances, and replaces shapelet regions in the original instance with synthetic shapelets. The counterfactual with minimum Hamming distance that flips the prediction is returned.
@@ -1449,13 +1722,13 @@ cf, prediction = sparce_generate(
 
 **Usage Example:**
 ```python
-from cfts.cf_time_cf import time_cf_generate
+from cfts.cf_time_cf.time_cf import time_cf_generate
 
 cf, prediction = time_cf_generate(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
+    dataset=dataset,
     n_shapelets=10,
     M=32,
     timegan_epochs=100
@@ -1464,7 +1737,7 @@ cf, prediction = time_cf_generate(
 
 ---
 
-#### 25. TeRCE - Temporal Rule-Based Counterfactual Explanations (2022)
+#### 29. TeRCE - Temporal Rule-Based Counterfactual Explanations (2022)
 **Implementation:** `cfts/cf_terce/terce.py`
 
 **Description:** TeRCE generates counterfactual explanations by mining class-specific temporal rules using discriminative shapelet pairs, then systematically removing original class rules and introducing target class rules through nearest unlike neighbor (NUN) replacement with min-max normalization for scale adaptation.
@@ -1536,7 +1809,7 @@ cf, prediction = time_cf_generate(
 
 **Usage Example:**
 ```python
-from cfts.cf_terce import terce_generate
+from cfts.cf_terce.terce import terce_generate
 
 # Generate TeRCE counterfactual (simplified version using gradient saliency)
 cf, cf_label = terce_generate(
@@ -1565,7 +1838,7 @@ cf, cf_label = terce_generate(
 
 ---
 
-#### 26. MG-CF - Motif-Guided Counterfactual Explanations
+#### 30. MG-CF - Motif-Guided Counterfactual Explanations
 **Implementation:** `cfts/cf_mg_cf/mg_cf.py`
 
 **Description:** MG-CF uses shapelet transform to extract discriminative motifs (subsequences) from training data and generates counterfactuals by replacing the corresponding motif region in the original instance with the motif from the target class. This is a simple yet effective model-agnostic method that produces sparse and contiguous explanations.
@@ -1600,9 +1873,9 @@ from cfts.cf_mg_cf import mg_cf_generate
 
 cf, prediction = mg_cf_generate(
     sample=sample,
-    dataset=dataset,
     model=model,
     target_class=1,
+    dataset=dataset,
     n_shapelets=100,
     lengths_ratio=[0.3, 0.5, 0.7]
 )
@@ -1610,7 +1883,7 @@ cf, prediction = mg_cf_generate(
 
 ---
 
-#### 27. TimeX - Encoding Time-Series Explanations (2023)
+#### 31. TimeX - Encoding Time-Series Explanations (2023)
 **Implementation:** `cfts/cf_timex/timex.py`
 
 **Description:** Time series explainer that learns interpretable surrogate models through self-supervised model behavior consistency, generating saliency-based explanations.
@@ -1631,7 +1904,7 @@ cf, prediction = mg_cf_generate(
 
 **Usage Example:**
 ```python
-from cfts.cf_timex import timex_explanation
+from cfts.cf_timex.timex import timex_explanation
 
 # Note: Requires pre-trained TimeX model
 saliency, prediction = timex_explanation(
@@ -1644,8 +1917,10 @@ saliency, prediction = timex_explanation(
 
 ---
 
-#### 28. TimeX++ - Learning Time-Series Explanations with Information Bottleneck (2024)
+#### 32. TimeX++ - Learning Time-Series Explanations with Information Bottleneck (2024)
 **Implementation:** `cfts/cf_timex_plus_plus/timex_plus_plus.py`
+
+**Status: not yet implemented.** The file currently contains only the method description below as comments — no `timexplusplus_explanation` function exists yet, so the usage example is aspirational (documents the intended interface, not a working call).
 
 **Description:** Improved time series explainer based on information bottleneck principle that generates in-distributed and label-preserving explanation instances. Addresses distribution shift and signaling issues in applying IB to time series explainability.
 
@@ -1682,7 +1957,7 @@ saliency, prediction = timex_explanation(
 
 **Usage Example:**
 ```python
-from cfts.cf_timex_plus_plus import timexplusplus_explanation
+from cfts.cf_timex_plus_plus.timex_plus_plus import timexplusplus_explanation
 
 # Note: Requires training TimeX++ explanation extractor and conditioner
 saliency_mask, embedded_instance, prediction = timexplusplus_explanation(
@@ -1694,6 +1969,59 @@ saliency_mask, embedded_instance, prediction = timexplusplus_explanation(
     r=0.5,      # Mask sparsity parameter
     epochs=50
 )
+```
+
+---
+
+#### 33. CoDec - Counterfactual Decomposition (2026, in progress)
+**Implementation:** `cfts/cf_codec/`
+
+**Status: prototype / work in progress.** No standalone publication yet - CoDec generalizes IMFACT (#14) into a modular framework and is being validated ahead of a September 2026 planning meeting; see `cfts/cf_codec/CoDec_workplan.md` and `CoDec_presentation.pdf` for the design docs this implementation follows.
+
+**Description:** Generalizes IMFACT's single-decomposition (EMD), single-reference (NUN), greedy index-matched pipeline into a framework where reference selection, decomposition, matching, and perturbation are each independently swappable. Given a query series and a fitted black-box classifier, it decomposes the query into components, substitutes one or more components with a matched donor's components, and reconstructs - widening the substituted-component set or advancing to the next reference on failure until the classifier flips or the search budget is exhausted. Kept classifier-agnostic by design (no gradients).
+
+**Key Features:**
+- **Swappable decomposition** (`cfts/cf_codec/decompositions.py`), one per row of the "Choosing a Decomposition" heuristic table: `"emd"` (wraps `emd.sift.sift`, reproduces IMFACT's IMF baseline), `"wavelet"` (multi-level DWT via PyWavelets), `"fourier"` (trend + STFT frequency bands), `"stl"` (trend/seasonal/residual, ACF-estimated period, falls back to `"fourier"` when none is found), `"eigen"` (Singular Spectrum Analysis - trajectory-matrix SVD + diagonal averaging, applied per channel), `"shapelet"` (localized high-local-variance windows, masked to zero elsewhere), `"changepoint"` (piecewise-constant regime segmentation via `ruptures`), `"quantile"` (robust rolling-median trend + quantile-thresholded spike/noise split). Every strategy reconstructs exactly or near-exactly by construction.
+- **Swappable reference selection** (`references.py`): `"nun"` (exact IMFACT nearest-unlike-neighbor) or `"composite"` (favored - per-component donor stitched from the `k` nearest candidates, so different components can come from different donor series)
+- **Swappable matching** (`matching.py`): `"hungarian"` (favored - optimal cross-series component assignment via `scipy.optimize.linear_sum_assignment`, cost pluggable across dominant-frequency / energy / spectral-similarity) or `"index"` (naive positional fallback)
+- **Swappable perturbation** (`perturbation.py`): `"replace"` (direct substitution, IMFACT baseline) or `"interpolate"` (gradual blend toward the donor component)
+- **`CoDecPipeline`**: the search loop as a standalone, framework-agnostic object (any `predict_fn`, not just PyTorch) that `codec_cf` adapts to this repository's shared `<name>_cf` contract
+- **Sparsity by components, not raw time points**: `CoDecResult.sparsity` counts substituted components, matching the workplan's explicit reviewer-driven metric correction
+
+**Scope note:** this pass implements the algorithm (all eight decomposers, two reference selectors, two matchers, two perturbers, + search loop); the workplan's Phase 5/6 evaluation harness (full 128 UCR + 30 UEA archive runner, baseline-method wrappers, plausibility/robustness metrics) is intentionally not included - a smaller per-dataset ablation lives in `cfts/cf_codec/experiments/compare_ucr.py` instead. See the module docstring in `cfts/cf_codec/codec.py` for the full scope notes.
+
+**Reference:**
+```bibtex
+@misc{schlegel2026codec,
+  title={CoDec: Counterfactual Decomposition - A Modular Framework for Decomposition-Based Counterfactual Explanations of Time Series Classifiers},
+  author={Schlegel, Udo},
+  year={2026},
+  note={Work in progress, extends IMFACT (schlegel2026imfact)}
+}
+```
+
+**Usage Example:**
+```python
+from cfts.cf_codec.codec import codec_cf
+
+cf, prediction = codec_cf(
+    sample=sample,
+    model=model,
+    dataset=dataset,
+    target_class=1,
+    decomposition="emd",              # "emd" | "wavelet" | "fourier" | "stl" | "eigen" | "shapelet" | "changepoint" | "quantile"
+    reference_selection="composite",   # "nun" | "composite"
+    matching="hungarian",              # "hungarian" | "index"
+    cost_fn="dominant_frequency",      # "dominant_frequency" | "energy" | "spectral_similarity"
+    perturbation="replace",            # "replace" | "interpolate"
+    k=5,
+    max_iter=20,
+    verbose=True,
+)
+
+# Full search trace (validity, sparsity-by-components, substituted indices, history)
+cf, prediction, result = codec_cf(sample, model, dataset=dataset, target_class=1, return_result=True)
+print(result.valid, result.sparsity, result.substituted_components)
 ```
 
 ---
@@ -1876,4 +2204,4 @@ If you use this library in your research, please cite:
 
 ---
 
-**Last Updated:** January 2025
+**Last Updated:** August 2026

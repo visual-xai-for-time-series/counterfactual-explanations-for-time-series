@@ -138,37 +138,37 @@ def main():
     # Define all FFT-CF variants
     variants = [
         ('Nearest Neighbor', 
-         lambda s, d, m, t: fft_nn_cf(s, d, m, t, k=5, verbose=False)),
+         lambda s, d, m, t: fft_nn_cf(s, m, t, d, k=5, verbose=False)),
         
         ('Adaptive Saliency', 
-         lambda s, d, m, t: fft_adaptive_cf(s, d, m, t, k=5, use_saliency=True, verbose=False)),
+         lambda s, d, m, t: fft_adaptive_cf(s, m, t, d, k=5, use_saliency=True, verbose=False)),
         
         ('Iterative Refinement', 
-         lambda s, d, m, t: fft_iterative_cf(s, d, m, t, k=5, refine_iterations=30, verbose=False)),
+         lambda s, d, m, t: fft_iterative_cf(s, m, t, d, k=5, refine_iterations=30, verbose=False)),
         
         ('Smart Blend', 
-         lambda s, d, m, t: fft_smart_blend_cf(s, d, m, t, k=5, search_method='binary', verbose=False)),
+         lambda s, d, m, t: fft_smart_blend_cf(s, m, t, d, k=5, search_method='binary', verbose=False)),
         
         ('Frequency Distance', 
-         lambda s, d, m, t: fft_freq_distance_cf(s, d, m, t, k=5, freq_weight_strategy='energy', verbose=False)),
+         lambda s, d, m, t: fft_freq_distance_cf(s, m, t, d, k=5, freq_weight_strategy='energy', verbose=False)),
         
         ('Wavelet Transform', 
-         lambda s, d, m, t: fft_wavelet_cf(s, d, m, t, k=5, wavelet='db4', level=3, verbose=False)),
+         lambda s, d, m, t: fft_wavelet_cf(s, m, t, d, k=5, wavelet='db4', level=3, verbose=False)),
         
         ('Hybrid Amp-Phase', 
-         lambda s, d, m, t: fft_hybrid_cf(s, d, m, t, k=5, analyze_importance=False, verbose=False)),
+         lambda s, d, m, t: fft_hybrid_cf(s, m, t, d, k=5, analyze_importance=False, verbose=False)),
         
         ('Progressive Switching', 
-         lambda s, d, m, t: fft_progressive_cf(s, d, m, t, k=5, steps_per_neighbor=5, verbose=False)),
+         lambda s, d, m, t: fft_progressive_cf(s, m, t, d, k=5, steps_per_neighbor=5, verbose=False)),
         
         ('Confidence Threshold', 
-         lambda s, d, m, t: fft_confidence_threshold_cf(s, d, m, t, k=5, confidence_threshold=0.85, verbose=False)),
+         lambda s, d, m, t: fft_confidence_threshold_cf(s, m, t, d, k=5, confidence_threshold=0.85, verbose=False)),
         
         ('Hybrid Enhanced', 
-         lambda s, d, m, t: fft_hybrid_enhanced_cf(s, d, m, t, k=5, analyze_importance=True, fallback_on_failure=True, verbose=False)),
+         lambda s, d, m, t: fft_hybrid_enhanced_cf(s, m, t, d, k=5, analyze_importance=True, fallback_on_failure=True, verbose=False)),
         
         ('Band Optimizer', 
-         lambda s, d, m, t: fft_band_optimizer_cf(s, d, m, t, k=5, num_bands=3, use_saliency=True, verbose=False)),
+         lambda s, d, m, t: fft_band_optimizer_cf(s, m, t, d, k=5, num_bands=3, use_saliency=True, verbose=False)),
     ]
     
     results = {}

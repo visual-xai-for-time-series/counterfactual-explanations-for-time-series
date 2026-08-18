@@ -1,58 +1,96 @@
 """
-Reference / abstract implementation – template for new CF methods.
+cf__abstract – interface contract and shared utilities for CF methods.
 
-This module provides:
-  1. Shared utility helpers (tensor conversion, shape normalisation) that every
-     concrete method in this library uses and can import from here.
-  2. ``abstract_cf`` – a minimal but fully functional counterfactual function
-     that follows the exact same signature pattern as every other method in the
-     repository (native_guide_uni_cf, glacier_cf, cem_cf, …).  It is
-     deliberately trivial (iterative Gaussian noise) so contributors can copy
-     it as a starting point.
+Every counterfactual method in this repository lives in its own
+``cfts/cf_<name>/<name>.py`` module and exposes one top-level function::
 
-Implementing a new method
---------------------------
-Copy this file, rename the module and the top-level ``<name>_cf`` function,
-then replace the body of the core loop with the real algorithm.  Keep the same
-return signature: ``(counterfactual, scores)`` where both are NumPy arrays and
-``counterfactual`` has the same shape / orientation as the input ``sample``.
+    <name>_cf(sample, model, target_class=None, dataset=None, **kwargs)
+        -> Tuple[np.ndarray, np.ndarray]
 
-Minimal skeleton
-----------------
-    import numpy as np
-    import torch
-    from cfts.cf__abstract.abstract import (
-        detach_to_numpy, numpy_to_torch, ensure_cl, revert_orientation,
-    )
+This module is the canonical definition of that contract, split into three
+parts:
 
-    def my_cf(sample, dataset, model, target_class=None, max_iter=200, verbose=False):
-        device = next(model.parameters()).device
-        sample_cl, ori = ensure_cl(np.asarray(sample, dtype=np.float32))
-        C, L = sample_cl.shape
+  1. :class:`CFMethod` – an ``abc.ABC`` that pins the call signature and the
+     shape/semantics of its inputs and outputs down in code rather than only
+     in prose. Concrete methods are plain functions, not subclasses of it;
+     it exists purely as an executable spec to check a new method against.
+  2. Shared helpers (tensor conversion, shape normalisation, batched
+     inference, dataset subsampling) that concrete implementations import
+     from here instead of redefining.
+  3. :func:`abstract_cf` – a minimal, working implementation of the contract
+     (iterative Gaussian noise) to copy as a starting point.
 
-        # --- original prediction ---
-        with torch.no_grad():
-            scores_orig = detach_to_numpy(
-                model(numpy_to_torch(sample_cl.reshape(1, C, L), device))
-            ).reshape(-1)
-        label_orig = int(np.argmax(scores_orig))
-
-        cf = sample_cl.copy()
-        scores_cf = scores_orig.copy()
-
-        for i in range(max_iter):
-            # ... your algorithm here ...
-            pass
-
-        return revert_orientation(cf, ori), scores_cf
+Adding a new method
+--------------------
+  1. Create ``cfts/cf_<name>/<name>.py``.
+  2. Implement ``<name>_cf`` against the :class:`CFMethod` contract – copy
+     :func:`abstract_cf` and replace its core loop with the real algorithm.
+  3. Import helpers from this module rather than duplicating them.
+  4. Register the new package in ``cfts/__init__.py`` (the import list,
+     ``__all__``, and ``COUNTERFACTUAL_ALGORITHMS``).
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Tuple
 
 import numpy as np
 import torch
+
+
+# ---------------------------------------------------------------------------
+# The contract
+# ---------------------------------------------------------------------------
+
+class CFMethod(ABC):
+    """Executable specification of what a ``<name>_cf`` function must do.
+
+    Not meant to be subclassed – every method in this repository is a bare
+    function, checked against this contract by eye rather than by
+    inheritance. It is written as an ``abstractmethod`` so the required
+    signature and contract live in one enforceable place.
+    """
+
+    @abstractmethod
+    def __call__(
+        self,
+        sample: np.ndarray | list,
+        model: torch.nn.Module,
+        target_class: int | None = None,
+        dataset: list | np.ndarray | None = None,
+        **kwargs,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Parameters
+        ----------
+        sample:
+            Query time series. Accepts 1-D ``(L,)``, ``(C, L)`` or ``(L, C)``
+            NumPy arrays (or anything that converts with ``np.asarray``).
+        model:
+            PyTorch classifier whose forward pass accepts ``(B, C, L)``
+            tensors and returns ``(B, num_classes)`` logits / probabilities.
+        target_class:
+            Desired class for the counterfactual. May be ignored by methods
+            that only search for *any* class change, but must still be
+            accepted for signature compatibility.
+        dataset:
+            Sequence of ``(x, y)`` pairs, or a NumPy array of shape
+            ``(N, C, L)``, used by methods that need reference examples
+            (nearest-unlike-neighbour search, autoencoder training, ...).
+            May be ignored by methods that don't need it.
+        **kwargs:
+            Method-specific hyperparameters.
+
+        Returns
+        -------
+        counterfactual : np.ndarray
+            Counterfactual time series in the **same shape / orientation**
+            as *sample*.
+        scores : np.ndarray, shape (num_classes,)
+            Model output (logits or softmax scores) for the counterfactual.
+        """
+        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +277,7 @@ def subsample_dataset(dataset, max_samples: int) -> list:
 
 
 ####
-# abstract_cf – Reference / template implementation (not a research method)
+# abstract_cf – reference implementation of the CFMethod contract
 #
 # Paper: N/A – this is a template, not a published algorithm.
 #
@@ -266,23 +304,16 @@ def abstract_cf(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Reference counterfactual using iterative random Gaussian perturbation.
 
-    Follows the exact same signature pattern as every other CF method in this
-    repository (native_guide_uni_cf, glacier_cf, cem_cf, …) so it plugs
-    straight into the existing evaluation and example scripts.
+    Implements the :class:`CFMethod` contract; see its docstring for the
+    parameter and return semantics shared by every method. Parameters below
+    cover only what's specific to this implementation.
 
     Parameters
     ----------
-    sample:
-        Query time series.  Accepts 1-D ``(L,)``, ``(C, L)`` or ``(L, C)``
-        NumPy arrays (or anything that converts with ``np.asarray``).
-    model:
-        PyTorch classifier whose forward pass accepts ``(B, C, L)`` tensors
-        and returns ``(B, num_classes)`` logits / probabilities.
-    target_class: (Not used in the abstract_cf, but included in the signature for consistency with other methods.)
-        The class to which the counterfactual should be perturbed.
-    dataset: (Not used in the abstract_cf, but included in the signature for consistency with other methods.)
-        Sequence of (x, y) pairs where each *x* is a time series.
-        May also be a NumPy array of shape (N, C, L).
+    target_class:
+        Unused here – kept for interface compatibility.
+    dataset:
+        Unused here – kept for interface compatibility.
     max_iter:
         Maximum number of perturbation attempts before giving up.
     noise_scale:
@@ -293,14 +324,6 @@ def abstract_cf(
         Integer seed for reproducibility, or ``None`` for random behaviour.
     verbose:
         Print per-iteration diagnostics when ``True``.
-
-    Returns
-    -------
-    counterfactual : np.ndarray
-        Counterfactual time series in the **same shape / orientation** as
-        *sample*.
-    scores : np.ndarray, shape (num_classes,)
-        Model output (logits or softmax scores) for the counterfactual.
 
     Example
     -------

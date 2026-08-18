@@ -117,34 +117,34 @@ def main():
     #       require numpy array format and are not compatible with this script
     variants = [
         ('fft_cf', 'Original Greedy', 
-         lambda: fft_cf(sample, dataset_test, model, target_class, max_iterations=50, verbose=False)),
+         lambda: fft_cf(sample, model, target_class, dataset_test, max_iterations=50, verbose=False)),
         
         ('fft_gradient_cf', 'Gradient Descent',
-         lambda: fft_gradient_cf(sample, dataset_test, model, target_class, max_iterations=50, verbose=False)),
+         lambda: fft_gradient_cf(sample, model, target_class, dataset_test, max_iterations=50, verbose=False)),
         
         ('fft_nn_cf', 'Nearest Neighbor',
-         lambda: fft_nn_cf(sample, dataset_test, model, target_class, k=5, verbose=False)),
+         lambda: fft_nn_cf(sample, model, target_class, dataset_test, k=5, verbose=False)),
         
         ('fft_adaptive_cf', 'Adaptive Saliency',
-         lambda: fft_adaptive_cf(sample, dataset_test, model, target_class, k=5, use_saliency=True, verbose=False)),
+         lambda: fft_adaptive_cf(sample, model, target_class, dataset_test, k=5, use_saliency=True, verbose=False)),
         
         ('fft_iterative_cf', 'Iterative Refinement',
-         lambda: fft_iterative_cf(sample, dataset_test, model, target_class, k=5, refine_iterations=50, verbose=False)),
+         lambda: fft_iterative_cf(sample, model, target_class, dataset_test, k=5, refine_iterations=50, verbose=False)),
         
         ('fft_smart_blend_cf', 'Smart Blend (Binary)',
-         lambda: fft_smart_blend_cf(sample, dataset_test, model, target_class, k=5, search_method='binary', verbose=False)),
+         lambda: fft_smart_blend_cf(sample, model, target_class, dataset_test, k=5, search_method='binary', verbose=False)),
         
         ('fft_freq_distance_cf', 'Frequency Distance',
-         lambda: fft_freq_distance_cf(sample, dataset_test, model, target_class, k=5, freq_weight_strategy='energy', verbose=False)),
+         lambda: fft_freq_distance_cf(sample, model, target_class, dataset_test, k=5, freq_weight_strategy='energy', verbose=False)),
         
         ('fft_wavelet_cf', 'Wavelet Transform',
-         lambda: fft_wavelet_cf(sample, dataset_test, model, target_class, k=5, wavelet='db4', level=3, verbose=False)),
+         lambda: fft_wavelet_cf(sample, model, target_class, dataset_test, k=5, wavelet='db4', level=3, verbose=False)),
         
         ('fft_hybrid_cf', 'Hybrid Amp-Phase',
-         lambda: fft_hybrid_cf(sample, dataset_test, model, target_class, k=5, analyze_importance=True, verbose=False)),
+         lambda: fft_hybrid_cf(sample, model, target_class, dataset_test, k=5, analyze_importance=True, verbose=False)),
         
         ('fft_progressive_cf', 'Progressive Switching',
-         lambda: fft_progressive_cf(sample, dataset_test, model, target_class, k=5, steps_per_neighbor=5, verbose=False)),
+         lambda: fft_progressive_cf(sample, model, target_class, dataset_test, k=5, steps_per_neighbor=5, verbose=False)),
     ]
     
     # Run all variants

@@ -2,7 +2,9 @@
 Arabic Digits Counterfactual Explanations Example
 
 This example demonstrates counterfactual explanation generation for the SpokenArabicDigits dataset
-using various methods (Native Guide, COMTE, SETS, MOC, Wachter, GLACIER, Multi-SpaCE) with enhanced visualization.
+using two representative methods from each category (Optimization-Based: Wachter, COMTE;
+Evolutionary: TSEvo, Sub-SpaCE; Instance-Based: Native Guide, CELS; Latent Space: GLACIER,
+Latent-CF; Segment-Based: SETS, TS-CEM; Hybrid: TeRCE, MG-CF) with enhanced visualization.
 
 Features:
 - Multi-channel time series support (13 channels, 65 timesteps)
@@ -63,30 +65,14 @@ import cfts.cf_native_guide.native_guide as ng
 import cfts.cf_wachter.wachter as w
 import cfts.cf_comte.comte as comte
 import cfts.cf_sets.sets as sets
-import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
-import cfts.cf_multispace.multispace as ms
 import cfts.cf_subspace.subspace as subspace
 import cfts.cf_tsevo.tsevo as tsevo
-import cfts.cf_lasts.lasts as lasts
-import cfts.cf_tscf.tscf as tscf
-import cfts.cf_fastpace.fastpace as fastpace
-import cfts.cf_time_cf.time_cf as time_cf
-import cfts.cf_sg_cf.sg_cf as sg_cf
 from cfts.cf_mg_cf import mg_cf_generate_stumpy
 import cfts.cf_latent_cf.latent_cf as latent_cf
-import cfts.cf_discox.discox as discox
 import cfts.cf_cels.cels as cels
-from cfts.cf_fft_cf.fft_cf import fft_nn_cf
 import cfts.cf_terce.terce as terce
-import cfts.cf_ab_cf.ab_cf as ab_cf
-import cfts.cf_cfwot.cfwot as cfwot
-import cfts.cf_cgm.cgm as cgm
-import cfts.cf_counts.counts as counts
-import cfts.cf_sparce.sparce as sparce
 import cfts.cf_cem.cem as cem
-import cfts.cf_ts_tweaking.ts_tweaking as ts_tweaking
-import cfts.cf__abstract.abstract as abstract_cf_mod
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -284,12 +270,8 @@ timing_results = {}
 
 # Count total methods to run
 methods = [
-    'Native Guide', 'COMTE', 'COMTE-TS', 'SETS', 'MOC (Dandl)', 
-    'Wachter Gradient', 'Wachter Genetic', 'GLACIER', 'Multi-SpaCE', 
-    'Sub-SpaCE', 'TSEvo', 'LASTS', 'TSCF', 'FASTPACE', 'TIME-CF', 
-    'SG-CF', 'MG-CF', 'Latent-CF', 'DiSCoX', 'M-CELS', 'FFT-CF', 
-    'TERCE', 'AB-CF', 'CFWOT', 'CGM', 'COUNTS', 'SPARCE',
-    'CEM', 'TS-Tweaking', 'Abstract'
+    'Native Guide', 'COMTE', 'SETS', 'Wachter Genetic', 'GLACIER',
+    'Sub-SpaCE', 'TSEvo', 'MG-CF', 'Latent-CF', 'M-CELS', 'TERCE', 'CEM',
 ]
 
 # Initialize progress bar
@@ -304,37 +286,16 @@ progress.update(1)
 
 print('Start with COMTE')
 start_time = time.time()
-cf_comte, prediction_comte = comte.comte_cf(sample, dataset_test, model, target_class=target_class)
+cf_comte, prediction_comte = comte.comte_cf_gradient(sample, model, target_class=target_class, dataset=dataset_test)
 timing_results['COMTE'] = time.time() - start_time
 print(f'COMTE completed in {timing_results["COMTE"]:.3f} seconds')
 progress.update(1)
 
-print('Start with COMTE-TS')
-start_time = time.time()
-cf_comte_ts, prediction_comte_ts = comte.comte_ts_cf(sample, dataset_test, model, target_class=target_class)
-timing_results['COMTE-TS'] = time.time() - start_time
-print(f'COMTE-TS completed in {timing_results["COMTE-TS"]:.3f} seconds')
-progress.update(1)
-
 print('Start with SETS')
 start_time = time.time()
-cf_sets, prediction_sets = sets.sets_cf(sample, dataset_test, model, target_class=target_class)
+cf_sets, prediction_sets = sets.sets_cf(sample, model, target_class=target_class, dataset=dataset_test)
 timing_results['SETS'] = time.time() - start_time
 print(f'SETS completed in {timing_results["SETS"]:.3f} seconds')
-progress.update(1)
-
-print('Start with Dandl et al.')
-start_time = time.time()
-cf_moc, prediction_moc = dandl.moc_cf(sample, dataset_test, model, target_class=target_class)
-timing_results['MOC (Dandl)'] = time.time() - start_time
-print(f'MOC completed in {timing_results["MOC (Dandl)"]:.3f} seconds')
-progress.update(1)
-
-print('Start with Gradient Wachter et al.')
-start_time = time.time()
-cf_wg, prediction_wg = w.wachter_gradient_cf(sample, dataset_test, model, target=target_class)
-timing_results['Wachter Gradient'] = time.time() - start_time
-print(f'Wachter Gradient completed in {timing_results["Wachter Gradient"]:.3f} seconds')
 progress.update(1)
 
 print('Start with Genetic Wachter et al.')
@@ -344,35 +305,24 @@ if hasattr(dataset_test, 'std'):
 else:
     step_size = 0.1
 start_time = time.time()
-cf_w, prediction_w = w.wachter_genetic_cf(sample, model, target=target_class, step_size=step_size, max_steps=1000)
+cf_w, prediction_w = w.wachter_genetic_cf(sample, model, target_class=target_class, step_size=step_size, max_steps=1000)
 timing_results['Wachter Genetic'] = time.time() - start_time
 print(f'Wachter Genetic completed in {timing_results["Wachter Genetic"]:.3f} seconds')
 progress.update(1)
 
 print('Start with GLACIER')
 start_time = time.time()
-cf_glacier, prediction_glacier = glacier.glacier_cf(sample, dataset_test, model, target_class=target_class)
+cf_glacier, prediction_glacier = glacier.glacier_cf(sample, model, target_class=target_class, dataset=dataset_test)
 timing_results['GLACIER'] = time.time() - start_time
 print(f'GLACIER completed in {timing_results["GLACIER"]:.3f} seconds')
-progress.update(1)
-
-print('Start with Multi-SpaCE')
-start_time = time.time()
-# Multi-SpaCE doesn't support explicit target class, it finds the nearest different class
-cf_multispace, prediction_multispace = ms.multi_space_cf(sample, dataset_test, model,
-                                                          population_size=30,
-                                                          max_iterations=50,
-                                                          sparsity_weight=0.3,
-                                                          validity_weight=0.7)
-timing_results['Multi-SpaCE'] = time.time() - start_time
-print(f'Multi-SpaCE completed in {timing_results["Multi-SpaCE"]:.3f} seconds')
 progress.update(1)
 
 print('Start with Sub-SpaCE')
 start_time = time.time()
 cf_subspace, prediction_subspace = subspace.subspace_cf(
-    sample, dataset_test, model,
-    desired_class=target_class,
+    sample, model,
+    target_class=target_class,
+    dataset=dataset_test,
     population_size=100,
     max_iter=200,
     alpha=0.8,
@@ -389,93 +339,13 @@ progress.update(1)
 
 print('Start with TSEvo')
 start_time = time.time()
-cf_tsevo, prediction_tsevo = tsevo.tsevo_cf(sample, dataset_test, model, 
+cf_tsevo, prediction_tsevo = tsevo.tsevo_cf(sample, model,
                                             target_class=target_class,
+                                            dataset=dataset_test,
                                             population_size=30,
                                             generations=50)
 timing_results['TSEvo'] = time.time() - start_time
 print(f'TSEvo completed in {timing_results["TSEvo"]:.3f} seconds')
-progress.update(1)
-
-print('Start with LASTS')
-start_time = time.time()
-cf_lasts, prediction_lasts = lasts.lasts_cf(sample, dataset_test, model, 
-                                            target_class=target_class,
-                                            latent_dim=32,
-                                            n_iterations=100,
-                                            train_ae_epochs=50,
-                                            verbose=False)
-timing_results['LASTS'] = time.time() - start_time
-print(f'LASTS completed in {timing_results["LASTS"]:.3f} seconds')
-progress.update(1)
-
-print('Start with TSCF')
-start_time = time.time()
-cf_tscf, prediction_tscf = tscf.tscf_cf(sample, dataset_test, model, 
-                                       target_class=target_class,
-                                       lambda_l1=0.01,
-                                       lambda_l2=0.01,
-                                       lambda_smooth=0.001,
-                                       learning_rate=0.1,
-                                       max_iterations=2000,
-                                       verbose=False)
-timing_results['TSCF'] = time.time() - start_time
-print(f'TSCF completed in {timing_results["TSCF"]:.3f} seconds')
-progress.update(1)
-
-print('Start with FASTPACE')
-start_time = time.time()
-try:
-    cf_fastpace, prediction_fastpace = fastpace.fastpace_cf(sample, dataset_test, model, 
-                                                            target=target_class,
-                                                            n_planning_steps=10,
-                                                            intervention_step_size=0.3,
-                                                            lambda_proximity=1.0,
-                                                            lambda_plausibility=0.5,
-                                                            max_refinement_iterations=500,
-                                                            verbose=False)
-    timing_results['FASTPACE'] = time.time() - start_time
-    print(f'FASTPACE completed in {timing_results["FASTPACE"]:.3f} seconds')
-except Exception as e:
-    cf_fastpace, prediction_fastpace = None, None
-    timing_results['FASTPACE'] = time.time() - start_time
-    print(f'FASTPACE failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with TIME-CF')
-start_time = time.time()
-try:
-    # TIME-CF uses the dataset directly
-    cf_time_cf, prediction_time_cf = time_cf.time_cf_generate(sample, dataset_test, model, 
-                                                             target_class=target_class,
-                                                             n_shapelets=10,
-                                                             M=32,
-                                                             timegan_epochs=20,
-                                                             verbose=False)
-    timing_results['TIME-CF'] = time.time() - start_time
-    if cf_time_cf is None:
-        print(f'TIME-CF completed but found no valid counterfactual in {timing_results["TIME-CF"]:.3f} seconds')
-    else:
-        print(f'TIME-CF completed in {timing_results["TIME-CF"]:.3f} seconds')
-except Exception as e:
-    cf_time_cf, prediction_time_cf = None, None
-    timing_results['TIME-CF'] = time.time() - start_time
-    print(f'TIME-CF failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with SG-CF')
-start_time = time.time()
-try:
-    cf_sg_cf, prediction_sg_cf = sg_cf.sg_cf(sample, dataset_test, model, 
-                                            target_class=target_class,
-                                            max_iter=1000,
-                                            verbose=False)
-    timing_results['SG-CF'] = time.time() - start_time
-    print(f'SG-CF completed in {timing_results["SG-CF"]:.3f} seconds')
-except Exception as e:
-    cf_sg_cf, prediction_sg_cf = None, None
-    timing_results['SG-CF'] = time.time() - start_time
-    print(f'SG-CF failed: {type(e).__name__}: {str(e)[:100]}')
 progress.update(1)
 
 print('Start with MG-CF (STUMPY optimized)')
@@ -489,8 +359,7 @@ try:
     subset_size = min(100, len(dataset_test))
     from torch.utils.data import Subset
     dataset_subset = Subset(dataset_test, range(subset_size))
-    cf_mg_cf, prediction_mg_cf = mg_cf_generate_stumpy(sample, dataset_subset, model, 
-                                                        target=target_class,
+    cf_mg_cf, prediction_mg_cf = mg_cf_generate_stumpy(sample, model, target_class=target_class, dataset=dataset_subset,
                                                         top_k=5,
                                                         verbose=False)
     timing_results['MG-CF'] = time.time() - start_time
@@ -504,8 +373,9 @@ progress.update(1)
 print('Start with Latent-CF')
 start_time = time.time()
 try:
-    cf_latent_cf, prediction_latent_cf = latent_cf.latent_cf_generate(sample, dataset_test, model, 
-                                                                      target=target_class,
+    cf_latent_cf, prediction_latent_cf = latent_cf.latent_cf_generate(sample, model,
+                                                                      target_class=target_class,
+                                                                      dataset=dataset_test,
                                                                       latent_dim=8,
                                                                       max_iter=100,
                                                                       verbose=False)
@@ -515,25 +385,6 @@ except Exception as e:
     cf_latent_cf, prediction_latent_cf = None, None
     timing_results['Latent-CF'] = time.time() - start_time
     print(f'Latent-CF failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with DiSCoX')
-start_time = time.time()
-try:
-    # DiSCoX only supports univariate time series (flattens to 1D internally)
-    if is_multivariate and sample_shape[0] > 1:
-        raise ValueError("DiSCoX only supports univariate time series")
-    cf_discox, prediction_discox = discox.discox_cf(sample, dataset_test, model, 
-                                                   target_class=target_class,
-                                                   window_size=20,
-                                                   max_iterations=50,
-                                                   verbose=False)
-    timing_results['DiSCoX'] = time.time() - start_time
-    print(f'DiSCoX completed in {timing_results["DiSCoX"]:.3f} seconds')
-except Exception as e:
-    cf_discox, prediction_discox = None, None
-    timing_results['DiSCoX'] = time.time() - start_time
-    print(f'DiSCoX failed: {type(e).__name__}: {str(e)[:100]}')
 progress.update(1)
 
 print('Start with M-CELS (multivariate CELS)')
@@ -551,7 +402,7 @@ try:
         print(f'M-CELS: Target class {target_class} has {target_samples_count} samples in training subset')
     
     cf_cels, prediction_cels = cels.m_cels_generate(sample, model, X_train, y_train_labels,
-                                                    target=target_class,
+                                                    target_class=target_class,
                                                     max_iter=100,
                                                     verbose=False)
     timing_results['M-CELS'] = time.time() - start_time
@@ -563,24 +414,6 @@ except Exception as e:
     cf_cels, prediction_cels = None, None
     timing_results['M-CELS'] = time.time() - start_time
     print(f'M-CELS failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with FFT-CF')
-start_time = time.time()
-try:
-    # Using nearest neighbor FFT blending approach
-    cf_fft_cf, prediction_fft_cf = fft_nn_cf(sample, dataset_test, model, 
-                                             target_class=target_class,
-                                             k=5,
-                                             blend_ratio=0.5,
-                                             frequency_bands="all",
-                                             verbose=False)
-    timing_results['FFT-CF'] = time.time() - start_time
-    print(f'FFT-CF completed in {timing_results["FFT-CF"]:.3f} seconds')
-except Exception as e:
-    cf_fft_cf, prediction_fft_cf = None, None
-    timing_results['FFT-CF'] = time.time() - start_time
-    print(f'FFT-CF failed: {type(e).__name__}: {str(e)[:100]}')
 progress.update(1)
 
 print('Start with TERCE')
@@ -614,112 +447,6 @@ except Exception as e:
     print(f'TERCE failed: {type(e).__name__}: {str(e)[:100]}')
 progress.update(1)
 
-print('Start with AB-CF')
-start_time = time.time()
-try:
-    # AB-CF requires training data for nearest unlike neighbor retrieval
-    # Use larger subset to ensure target class samples exist
-    subset_size = min(500, len(dataset_test))
-    X_train = np.array([dataset_test[i][0] for i in range(subset_size)])
-    y_train = np.array([np.argmax(dataset_test[i][1]) if hasattr(dataset_test[i][1], 'shape') and len(dataset_test[i][1].shape) > 0 else dataset_test[i][1] for i in range(subset_size)])
-    
-    cf_ab_cf, pred_class_ab_cf = ab_cf.ab_cf_generate(sample, model, X_train, y_train,
-                                                     target_class=target_class,
-                                                     n_segments=10,
-                                                     window_size_ratio=0.1,
-                                                     verbose=False)
-    # AB-CF returns an integer class, convert to probability array for consistency
-    if pred_class_ab_cf is not None:
-        prediction_ab_cf = np.zeros(output_classes)
-        prediction_ab_cf[pred_class_ab_cf] = 1.0
-    else:
-        prediction_ab_cf = None
-    timing_results['AB-CF'] = time.time() - start_time
-    if cf_ab_cf is None:
-        print(f'AB-CF completed but found no valid counterfactual in {timing_results["AB-CF"]:.3f} seconds')
-    else:
-        print(f'AB-CF completed in {timing_results["AB-CF"]:.3f} seconds')
-except Exception as e:
-    cf_ab_cf, prediction_ab_cf = None, None
-    timing_results['AB-CF'] = time.time() - start_time
-    print(f'AB-CF failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with CFWOT')
-start_time = time.time()
-try:
-    cf_cfwot, prediction_cfwot = cfwot.cfwot(sample, model,
-                                            target=target_class,
-                                            M_E=50,
-                                            M_T=50,
-                                            verbose=False)
-    timing_results['CFWOT'] = time.time() - start_time
-    if cf_cfwot is None:
-        print(f'CFWOT completed but found no valid counterfactual in {timing_results["CFWOT"]:.3f} seconds')
-    else:
-        print(f'CFWOT completed in {timing_results["CFWOT"]:.3f} seconds')
-except Exception as e:
-    cf_cfwot, prediction_cfwot = None, None
-    timing_results['CFWOT'] = time.time() - start_time
-    print(f'CFWOT failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with CGM')
-start_time = time.time()
-try:
-    cf_cgm, prediction_cgm = cgm.cgm_generate(sample, dataset_test, model,
-                                             target=target_class,
-                                             latent_dim=16,
-                                             max_iter=100,
-                                             verbose=False)
-    timing_results['CGM'] = time.time() - start_time
-    if cf_cgm is None:
-        print(f'CGM completed but found no valid counterfactual in {timing_results["CGM"]:.3f} seconds')
-    else:
-        print(f'CGM completed in {timing_results["CGM"]:.3f} seconds')
-except Exception as e:
-    cf_cgm, prediction_cgm = None, None
-    timing_results['CGM'] = time.time() - start_time
-    print(f'CGM failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with COUNTS')
-start_time = time.time()
-try:
-    cf_counts, prediction_counts = counts.counts_cf_with_pretrained_model(sample, dataset_test, model,
-                                                                          target=target_class,
-                                                                          latent_dim=16,
-                                                                          max_iter=100,
-                                                                          verbose=False)
-    timing_results['COUNTS'] = time.time() - start_time
-    if cf_counts is None:
-        print(f'COUNTS completed but found no valid counterfactual in {timing_results["COUNTS"]:.3f} seconds')
-    else:
-        print(f'COUNTS completed in {timing_results["COUNTS"]:.3f} seconds')
-except Exception as e:
-    cf_counts, prediction_counts = None, None
-    timing_results['COUNTS'] = time.time() - start_time
-    print(f'COUNTS failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with SPARCE')
-start_time = time.time()
-try:
-    cf_sparce, prediction_sparce = sparce.sparce_gradient_cf(sample, model,
-                                                             target=target_class,
-                                                             max_iter=100,
-                                                             verbose=False)
-    timing_results['SPARCE'] = time.time() - start_time
-    if cf_sparce is None:
-        print(f'SPARCE completed but found no valid counterfactual in {timing_results["SPARCE"]:.3f} seconds')
-    else:
-        print(f'SPARCE completed in {timing_results["SPARCE"]:.3f} seconds')
-except Exception as e:
-    cf_sparce, prediction_sparce = None, None
-    timing_results['SPARCE'] = time.time() - start_time
-    print(f'SPARCE failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
 print('Start with CEM (Contrastive Explanation Method)')
 start_time = time.time()
 try:
@@ -744,44 +471,6 @@ except Exception as e:
     print(f'CEM failed: {type(e).__name__}: {str(e)[:100]}')
 progress.update(1)
 
-print('Start with TS-Tweaking (k-NN global tweaking)')
-start_time = time.time()
-try:
-    cf_ts_tweaking, prediction_ts_tweaking = ts_tweaking.ts_tweaking_knn_cf(
-        sample, dataset_test, model,
-        target=target_class,
-        k=5,
-        n_clusters=5,
-        alpha_steps=20,
-        verbose=False,
-    )
-    timing_results['TS-Tweaking'] = time.time() - start_time
-    print(f'TS-Tweaking completed in {timing_results["TS-Tweaking"]:.3f} seconds')
-except Exception as e:
-    cf_ts_tweaking, prediction_ts_tweaking = None, None
-    timing_results['TS-Tweaking'] = time.time() - start_time
-    print(f'TS-Tweaking failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
-print('Start with Abstract (reference Gaussian noise template)')
-start_time = time.time()
-try:
-    cf_abstract, prediction_abstract = abstract_cf_mod.abstract_cf(
-        sample, dataset_test, model,
-        target_class=target_class,
-        max_iter=200,
-        noise_scale=0.05,
-        escalate_every=10,
-        verbose=False,
-    )
-    timing_results['Abstract'] = time.time() - start_time
-    print(f'Abstract completed in {timing_results["Abstract"]:.3f} seconds')
-except Exception as e:
-    cf_abstract, prediction_abstract = None, None
-    timing_results['Abstract'] = time.time() - start_time
-    print(f'Abstract failed: {type(e).__name__}: {str(e)[:100]}')
-progress.update(1)
-
 # Close the progress bar
 progress.close()
 
@@ -804,34 +493,16 @@ def format_combined_result(name, prediction, elapsed_time):
 print(f'{"Original":<20} {"-":<10} {original_class:<12} {original_pred_np[original_class]:<12.4f} {"-":>10}')
 print(format_combined_result('Native Guide', prediction_ng, timing_results['Native Guide']))
 print(format_combined_result('COMTE', prediction_comte, timing_results['COMTE']))
-print(format_combined_result('COMTE-TS', prediction_comte_ts, timing_results['COMTE-TS']))
 print(format_combined_result('SETS', prediction_sets, timing_results['SETS']))
-print(format_combined_result('MOC (Dandl)', prediction_moc, timing_results['MOC (Dandl)']))
-print(format_combined_result('Wachter Gradient', prediction_wg, timing_results['Wachter Gradient']))
 print(format_combined_result('Wachter Genetic', prediction_w, timing_results['Wachter Genetic']))
 print(format_combined_result('GLACIER', prediction_glacier, timing_results['GLACIER']))
-print(format_combined_result('Multi-SpaCE', prediction_multispace, timing_results['Multi-SpaCE']))
 print(format_combined_result('Sub-SpaCE', prediction_subspace, timing_results['Sub-SpaCE']))
 print(format_combined_result('TSEvo', prediction_tsevo, timing_results['TSEvo']))
-print(format_combined_result('LASTS', prediction_lasts, timing_results['LASTS']))
-print(format_combined_result('TSCF', prediction_tscf, timing_results['TSCF']))
-print(format_combined_result('FASTPACE', prediction_fastpace, timing_results['FASTPACE']))
-print(format_combined_result('TIME-CF', prediction_time_cf, timing_results['TIME-CF']))
-print(format_combined_result('SG-CF', prediction_sg_cf, timing_results['SG-CF']))
 print(format_combined_result('MG-CF', prediction_mg_cf, timing_results['MG-CF']))
 print(format_combined_result('Latent-CF', prediction_latent_cf, timing_results['Latent-CF']))
-print(format_combined_result('DiSCoX', prediction_discox, timing_results['DiSCoX']))
 print(format_combined_result('M-CELS', prediction_cels, timing_results['M-CELS']))
-print(format_combined_result('FFT-CF', prediction_fft_cf, timing_results['FFT-CF']))
 print(format_combined_result('TERCE', prediction_terce, timing_results['TERCE']))
-print(format_combined_result('AB-CF', prediction_ab_cf, timing_results['AB-CF']))
-print(format_combined_result('CFWOT', prediction_cfwot, timing_results['CFWOT']))
-print(format_combined_result('CGM', prediction_cgm, timing_results['CGM']))
-print(format_combined_result('COUNTS', prediction_counts, timing_results['COUNTS']))
-print(format_combined_result('SPARCE', prediction_sparce, timing_results['SPARCE']))
 print(format_combined_result('CEM', prediction_cem, timing_results['CEM']))
-print(format_combined_result('TS-Tweaking', prediction_ts_tweaking, timing_results['TS-Tweaking']))
-print(format_combined_result('Abstract', prediction_abstract, timing_results['Abstract']))
 print('='*80)
 print()
 
@@ -997,34 +668,16 @@ def create_enhanced_visualization(sample, label, original_pred_np, original_clas
 cf_results = {
     'Native Guide': (cf_ng, prediction_ng),
     'COMTE': (cf_comte, prediction_comte),
-    'COMTE-TS': (cf_comte_ts, prediction_comte_ts),
     'SETS': (cf_sets, prediction_sets),
-    'MOC': (cf_moc, prediction_moc),
-    'Wachter Gradient': (cf_wg, prediction_wg),
     'Wachter Genetic': (cf_w, prediction_w),
     'GLACIER': (cf_glacier, prediction_glacier),
-    'Multi-SpaCE': (cf_multispace, prediction_multispace),
     'Sub-SpaCE': (cf_subspace, prediction_subspace),
     'TSEvo': (cf_tsevo, prediction_tsevo),
-    'LASTS': (cf_lasts, prediction_lasts),
-    'TSCF': (cf_tscf, prediction_tscf),
-    'FASTPACE': (cf_fastpace, prediction_fastpace),
-    'TIME-CF': (cf_time_cf, prediction_time_cf),
-    'SG-CF': (cf_sg_cf, prediction_sg_cf),
     'MG-CF': (cf_mg_cf, prediction_mg_cf),
     'Latent-CF': (cf_latent_cf, prediction_latent_cf),
-    'DiSCoX': (cf_discox, prediction_discox),
     'M-CELS': (cf_cels, prediction_cels),
-    'FFT-CF': (cf_fft_cf, prediction_fft_cf),
     'TERCE': (cf_terce, prediction_terce),
-    'AB-CF': (cf_ab_cf, prediction_ab_cf),
-    'CFWOT': (cf_cfwot, prediction_cfwot),
-    'CGM': (cf_cgm, prediction_cgm),
-    'COUNTS': (cf_counts, prediction_counts),
-    'SPARCE': (cf_sparce, prediction_sparce),
     'CEM': (cf_cem, prediction_cem),
-    'TS-Tweaking': (cf_ts_tweaking, prediction_ts_tweaking),
-    'Abstract': (cf_abstract, prediction_abstract)
 }
 
 # Create enhanced visualization

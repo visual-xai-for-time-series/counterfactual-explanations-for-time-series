@@ -201,29 +201,31 @@ def interpolate_short(X_cf, mapping, thres=3):
     return X_cf_interpolated.to_numpy().reshape(-1)
 
 
-def discox_cf(sample, dataset, model, target_class=None,
+def discox_cf(sample, model, target_class=None, dataset=None,
               window_size=None, max_iterations=100,
               weight_steps=None, device=None, verbose=False):
     """
     Generate counterfactual using DisCOX (Discord-based Counterfactual) method.
-    
+
     This implements the full DisCOX algorithm with iterative discord discovery,
     mapping to target class prototypes, and weighted blending.
-    
+
     Args:
         sample: Time series instance to explain (numpy array)
-        dataset: Training dataset for prototype extraction
         model: Trained classifier model
         target_class: Target class for counterfactual (optional)
+        dataset: Training dataset for prototype extraction
         window_size: Discord window size (default: 10% of series length)
         max_iterations: Maximum discord discovery iterations
         weight_steps: Array of blend weights to try (default: 0.01 to 1.0)
         device: Device to run on
         verbose: Print progress information
-        
+
     Returns:
         Tuple of (counterfactual, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("discox_cf requires a dataset to find target-class prototypes.")
     if not HAS_STUMPY:
         raise ImportError("DisCOX requires STUMPY library. Install with: pip install stumpy")
     
@@ -347,6 +349,12 @@ def discox_cf(sample, dataset, model, target_class=None,
         
         valid_mp = mp_values.copy()
         mapped_indices = np.where(~np.isnan(mapping))[0]
+        # mapping is indexed over the full n_timesteps (0..n_timesteps-1), but
+        # mp_values/valid_mp only cover valid window START positions
+        # (0..n_timesteps-window_size), a shorter range — drop indices outside
+        # that range before masking, or this raises an IndexError once a
+        # discord write lands past len(valid_mp) (e.g. near the series end).
+        mapped_indices = mapped_indices[mapped_indices < len(valid_mp)]
         valid_mp[mapped_indices] = -np.inf
         
         if np.all(valid_mp == -np.inf):
@@ -477,25 +485,27 @@ def discox_cf(sample, dataset, model, target_class=None,
     return None, None
 
 
-def discox_explain(sample, dataset, model, target_class=None,
+def discox_explain(sample, model, target_class=None, dataset=None,
                   window_size=None, device=None, verbose=False):
     """
     Generate DisCOX explanation with detailed discord and mapping information.
-    
+
     Args:
         sample: Time series to explain
-        dataset: Training dataset
         model: Classifier model
         target_class: Target class
+        dataset: Training dataset
         window_size: Discord window size
         device: Device to use
         verbose: Print details
-        
+
     Returns:
         Dictionary with counterfactual, prediction, and explanation details
     """
+    if dataset is None:
+        raise ValueError("discox_explain requires a dataset to find target-class prototypes.")
     cf, cf_pred = discox_cf(
-        sample, dataset, model, target_class,
+        sample, model, target_class, dataset,
         window_size=window_size, device=device, verbose=verbose
     )
     

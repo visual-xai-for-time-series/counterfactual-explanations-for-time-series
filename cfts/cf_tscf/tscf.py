@@ -30,9 +30,9 @@ def numpy_to_torch(data, device):
 
 def tscf_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     lambda_l1: float = 0.01,
     lambda_l2: float = 0.01,
     lambda_smooth: float = 0.001,

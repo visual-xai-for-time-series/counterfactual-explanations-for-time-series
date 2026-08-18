@@ -175,31 +175,31 @@ def main():
     #       require numpy array format and are not compatible with this evaluation
     variants = [
         ('fft_gradient_cf', 'Gradient Descent',
-         lambda s, d, m, t: fft_gradient_cf(s, d, m, t, max_iterations=20, verbose=False)),
+         lambda s, d, m, t: fft_gradient_cf(s, m, t, d, max_iterations=20, verbose=False)),
         
         ('fft_nn_cf', 'Nearest Neighbor',
-         lambda s, d, m, t: fft_nn_cf(s, d, m, t, k=5, verbose=False)),
+         lambda s, d, m, t: fft_nn_cf(s, m, t, d, k=5, verbose=False)),
         
         ('fft_adaptive_cf', 'Adaptive Saliency',
-         lambda s, d, m, t: fft_adaptive_cf(s, d, m, t, k=5, use_saliency=True, verbose=False)),
+         lambda s, d, m, t: fft_adaptive_cf(s, m, t, d, k=5, use_saliency=True, verbose=False)),
         
         ('fft_iterative_cf', 'Iterative Refinement',
-         lambda s, d, m, t: fft_iterative_cf(s, d, m, t, k=5, refine_iterations=30, verbose=False)),
+         lambda s, d, m, t: fft_iterative_cf(s, m, t, d, k=5, refine_iterations=30, verbose=False)),
         
         ('fft_smart_blend_cf', 'Smart Blend',
-         lambda s, d, m, t: fft_smart_blend_cf(s, d, m, t, k=5, search_method='binary', verbose=False)),
+         lambda s, d, m, t: fft_smart_blend_cf(s, m, t, d, k=5, search_method='binary', verbose=False)),
         
         ('fft_freq_distance_cf', 'Frequency Distance',
-         lambda s, d, m, t: fft_freq_distance_cf(s, d, m, t, k=5, freq_weight_strategy='energy', verbose=False)),
+         lambda s, d, m, t: fft_freq_distance_cf(s, m, t, d, k=5, freq_weight_strategy='energy', verbose=False)),
         
         ('fft_wavelet_cf', 'Wavelet Transform',
-         lambda s, d, m, t: fft_wavelet_cf(s, d, m, t, k=5, wavelet='db4', level=3, verbose=False)),
+         lambda s, d, m, t: fft_wavelet_cf(s, m, t, d, k=5, wavelet='db4', level=3, verbose=False)),
         
         ('fft_hybrid_cf', 'Hybrid Amp-Phase',
-         lambda s, d, m, t: fft_hybrid_cf(s, d, m, t, k=5, analyze_importance=False, verbose=False)),
+         lambda s, d, m, t: fft_hybrid_cf(s, m, t, d, k=5, analyze_importance=False, verbose=False)),
         
         ('fft_progressive_cf', 'Progressive Switching',
-         lambda s, d, m, t: fft_progressive_cf(s, d, m, t, k=5, steps_per_neighbor=5, verbose=False)),
+         lambda s, d, m, t: fft_progressive_cf(s, m, t, d, k=5, steps_per_neighbor=5, verbose=False)),
     ]
     
     # Run batch evaluation with Keane metrics

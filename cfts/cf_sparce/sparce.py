@@ -29,7 +29,7 @@ def numpy_to_torch(data, device):
 # to the input query to produce counterfactuals. The approach regularizes the loss
 # function with:
 # - Adversarial loss (discriminator-based)
-# - Classification loss (target class prediction)
+# - Classification loss (target_class class prediction)
 # - Similarity loss (L1 norm between query and counterfactual)
 # - Sparsity loss (L0 norm encouraging sparse modifications)
 # - Jerk loss (smoothness of trajectory changes)
@@ -167,9 +167,9 @@ def compute_jerk_loss(deltas):
 
 
 def sparce_gan_cf(sample,
-                  dataset,
                   model,
-                  target=None,
+                  target_class=None,
+                  dataset=None,
                   lambda_adv=1.0,
                   lambda_cls=1.0,
                   lambda_sim=1.0,
@@ -185,13 +185,13 @@ def sparce_gan_cf(sample,
     
     This implementation uses a GAN with a residual generator and discriminator to
     produce sparse counterfactual explanations. The generator learns to create
-    minimal modifications (residuals) that achieve the target class prediction.
+    minimal modifications (residuals) that achieve the target_class class prediction.
     
     Args:
         sample: Input time series sample to explain (shape: [channels, length] or [length,])
-        dataset: Dataset for sampling target examples (not used in current implementation)
+        dataset: Dataset for sampling target_class examples (not used in current implementation)
         model: Pretrained classifier model
-        target: Target class for counterfactual (if None, uses second most likely class)
+        target_class: Target class for counterfactual (if None, uses second most likely class)
         lambda_adv: Weight for adversarial loss
         lambda_cls: Weight for classification loss
         lambda_sim: Weight for similarity loss (L1)
@@ -224,21 +224,21 @@ def sparce_gan_cf(sample,
     
     batch_size_actual, num_timesteps, num_features = sample_tensor.shape
     
-    # Get initial prediction and determine target
+    # Get initial prediction and determine target_class
     with torch.no_grad():
         y_orig = model(sample_tensor)
         y_orig_np = detach_to_numpy(y_orig)[0]
         label_orig = int(np.argmax(y_orig_np))
     
-    if target is None:
+    if target_class is None:
         # Find second most likely class
         sorted_indices = np.argsort(y_orig_np)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
-    target_tensor = torch.tensor([target], dtype=torch.long, device=device)
+    target_tensor = torch.tensor([target_class], dtype=torch.long, device=device)
     
     if verbose:
-        print(f"SPARCE: Original class {label_orig}, Target class {target}")
+        print(f"SPARCE: Original class {label_orig}, Target class {target_class}")
         print(f"Sample shape: {sample_tensor.shape}")
     
     # Initialize generator and discriminator
@@ -273,7 +273,7 @@ def sparce_gan_cf(sample,
         cf_class = torch.argmax(cf_pred, dim=1)
         
         # Compute losses
-        # 1. Classification loss - encourage target class
+        # 1. Classification loss - encourage target_class class
         cls_loss = ce_loss(cf_pred, target_tensor)
         
         # 2. Adversarial loss - fool discriminator
@@ -302,7 +302,7 @@ def sparce_gan_cf(sample,
         # Track best counterfactual (detach before storing)
         with torch.no_grad():
             cf_pred_np = detach_to_numpy(cf_pred)[0]
-            current_validity = cf_pred_np[target]
+            current_validity = cf_pred_np[target_class]
             
             if current_validity > best_validity:
                 best_validity = current_validity
@@ -334,15 +334,15 @@ def sparce_gan_cf(sample,
         # Verbose output
         if verbose and (epoch % 10 == 0 or epoch == num_epochs - 1):
             cf_class_np = int(cf_class.item())
-            print(f"Epoch {epoch}: pred_class={cf_class_np}, target={target}, "
+            print(f"Epoch {epoch}: pred_class={cf_class_np}, target_class={target_class}, "
                   f"validity={current_validity:.4f}, "
                   f"gen_loss={gen_loss.item():.4f}, disc_loss={disc_loss.item():.4f}")
             print(f"  cls={cls_loss.item():.4f}, adv={adv_loss.item():.4f}, "
                   f"sim={sim_loss.item():.4f}, sparse={sparse_loss.item():.4f}, "
                   f"jerk={jerk_loss_val.item():.4f}")
         
-        # Early stopping if target class achieved
-        if int(cf_class.item()) == target:
+        # Early stopping if target_class class achieved
+        if int(cf_class.item()) == target_class:
             if verbose:
                 print(f"SPARCE: Found counterfactual at epoch {epoch}")
             break
@@ -367,7 +367,7 @@ def sparce_gan_cf(sample,
 
 def sparce_gradient_cf(sample,
                        model,
-                       target=None,
+                       target_class=None,
                        lambda_cls=1.0,
                        lambda_sim=1.0,
                        lambda_sparse=1.0,
@@ -383,7 +383,7 @@ def sparce_gradient_cf(sample,
     Args:
         sample: Input time series sample
         model: Pretrained classifier
-        target: Target class
+        target_class: Target class
         lambda_cls: Weight for classification loss
         lambda_sim: Weight for similarity loss
         lambda_sparse: Weight for sparsity loss
@@ -412,14 +412,14 @@ def sparce_gradient_cf(sample,
         y_orig_np = detach_to_numpy(y_orig)[0]
         label_orig = int(np.argmax(y_orig_np))
     
-    if target is None:
+    if target_class is None:
         sorted_indices = np.argsort(y_orig_np)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
-    target_tensor = torch.tensor([target], dtype=torch.long, device=device)
+    target_tensor = torch.tensor([target_class], dtype=torch.long, device=device)
     
     if verbose:
-        print(f"SPARCE Gradient: Original class {label_orig}, Target class {target}")
+        print(f"SPARCE Gradient: Original class {label_orig}, Target class {target_class}")
     
     # Initialize residuals (modifications to apply)
     deltas = torch.zeros_like(sample_tensor, requires_grad=True)
@@ -459,7 +459,7 @@ def sparce_gradient_cf(sample,
         with torch.no_grad():
             cf_pred_np = detach_to_numpy(cf_pred)[0]
             cf_class = int(np.argmax(cf_pred_np))
-            current_validity = cf_pred_np[target]
+            current_validity = cf_pred_np[target_class]
             
             if current_validity > best_validity:
                 best_validity = current_validity
@@ -467,11 +467,11 @@ def sparce_gradient_cf(sample,
                 best_pred = cf_pred_np
         
         if verbose and iteration % 100 == 0:
-            print(f"Iter {iteration}: pred_class={cf_class}, target={target}, "
+            print(f"Iter {iteration}: pred_class={cf_class}, target_class={target_class}, "
                   f"validity={current_validity:.4f}, loss={total_loss.item():.4f}")
         
         # Early stopping
-        if cf_class == target:
+        if cf_class == target_class:
             if verbose:
                 print(f"SPARCE Gradient: Found counterfactual at iteration {iteration}")
             break

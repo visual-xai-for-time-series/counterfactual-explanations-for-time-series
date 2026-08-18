@@ -623,30 +623,32 @@ class LASTS:
         return explanation
 
 
-def lasts_cf(sample, dataset, model, target_class=None, 
+def lasts_cf(sample, model, target_class=None, dataset=None,
              latent_dim=32, n_samples=500, n_iterations=100,
              train_ae_epochs=50, autoencoder=None, device=None, verbose=False):
     """
     Generate counterfactual explanation using LASTS method.
-    
+
     This is the main entry point for using LASTS to generate counterfactuals.
-    
+
     Args:
         sample: Time series instance to explain
-        dataset: Training dataset for autoencoder
         model: Trained classifier model
         target_class: Target class for counterfactual (optional)
+        dataset: Training dataset for autoencoder (required)
         latent_dim: Latent space dimensionality
         n_samples: Number of neighborhood samples
-        n_iterations: Genetic algorithm iterations  
+        n_iterations: Genetic algorithm iterations
         train_ae_epochs: Epochs for autoencoder training
         autoencoder: Pre-trained autoencoder (optional)
         device: Device to run on
         verbose: Print progress
-        
+
     Returns:
         Tuple of (counterfactual, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("lasts_cf requires a dataset to train/build the autoencoder and neighborhood.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     

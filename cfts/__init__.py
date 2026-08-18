@@ -8,8 +8,10 @@ Available Algorithms:
 - AB-CF counterfactuals (cf_ab_cf)
 - CELS counterfactuals (cf_cels)
 - CEM counterfactuals (cf_cem)
+- CFE4MTS counterfactuals (cf_cfe4mts)
 - CFWOT counterfactuals (cf_cfwot)
 - CGM counterfactuals (cf_cgm)
+- CoDec counterfactuals (cf_codec)
 - Comte counterfactuals (cf_comte)
 - Confetti counterfactuals (cf_confetti)
 - CoUNTS counterfactuals (cf_counts)
@@ -32,6 +34,7 @@ Available Algorithms:
 - Time-CF counterfactuals (cf_time_cf)
 - TIMEX counterfactuals (cf_timex)
 - TIMEX++ counterfactuals (cf_timex_plus_plus)
+- TopGrad-CF counterfactuals (cf_topgrad)
 - TS-Tweaking counterfactuals (cf_ts_tweaking)
 - TSCF counterfactuals (cf_tscf)
 - TSEvo counterfactuals (cf_tsevo)
@@ -46,8 +49,10 @@ from . import (
     cf_ab_cf,
     cf_cels,
     cf_cem,
+    cf_cfe4mts,
     cf_cfwot,
     cf_cgm,
+    cf_codec,
     cf_comte,
     cf_confetti,
     cf_counts,
@@ -70,6 +75,7 @@ from . import (
     cf_time_cf,
     cf_timex,
     cf_timex_plus_plus,
+    cf_topgrad,
     cf_ts_tweaking,
     cf_tscf,
     cf_tsevo,
@@ -82,8 +88,10 @@ __all__ = [
     "cf_ab_cf",
     "cf_cels",
     "cf_cem",
+    "cf_cfe4mts",
     "cf_cfwot",
     "cf_cgm",
+    "cf_codec",
     "cf_comte",
     "cf_confetti",
     "cf_counts",
@@ -106,6 +114,7 @@ __all__ = [
     "cf_time_cf",
     "cf_timex",
     "cf_timex_plus_plus",
+    "cf_topgrad",
     "cf_ts_tweaking",
     "cf_tscf",
     "cf_tsevo",
@@ -119,8 +128,10 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_ab_cf",
     "cf_cels",
     "cf_cem",
+    "cf_cfe4mts",
     "cf_cfwot",
     "cf_cgm",
+    "cf_codec",
     "cf_comte",
     "cf_confetti",
     "cf_counts",
@@ -143,6 +154,7 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_time_cf",
     "cf_timex",
     "cf_timex_plus_plus",
+    "cf_topgrad",
     "cf_ts_tweaking",
     "cf_tscf",
     "cf_tsevo",

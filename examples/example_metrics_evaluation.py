@@ -6,25 +6,50 @@ algorithms using the comprehensive metrics suite. It integrates with the existin
 counterfactual methods (Native Guide, COMTE, COMTE-TS, SETS, MOC, Wachter, GLACIER,
 Multi-SpaCE, Sub-SpaCE, TSEvo, LASTS, TSCF, FASTPACE, TIME-CF, SG-CF, MG-CF,
 Latent-CF, DiSCoX, CELS, FFT-CF, TERCE, AB-CF, CFWOT, CGM, COUNTS, SPARCE,
-CEM-PN, Abstract-CF, TS-Tweaking-kNN, TS-Tweaking-Irrev, TS-Tweaking-Rev) from the
-cfts package and evaluates them on the FordA dataset.
+CEM-PN, Abstract-CF, TS-Tweaking-kNN, TS-Tweaking-Irrev, TS-Tweaking-Rev, CFE4MTS,
+CONFETTI, MASCOTS, IMFACT) from the cfts package and evaluates them on the
+FordA dataset.
 
 Note: Sub-SpaCE is designed primarily for multivariate time series and may not work
 with univariate datasets like FordA. It will be skipped if incompatible.
 
+Not included: TimeX (cf_timex) requires a separately pre-trained saliency model
+that this repository has no training routine for, and produces an attribution
+map rather than a counterfactual time series; TimeX++ (cf_timex_plus_plus) has
+no implementation yet (module is a docstring stub). Both are skipped until
+that infrastructure exists.
+
+All 36 algorithms are evaluated, but to keep it readable, metrics_combined.png
+(and the individual metrics_*.png / keane_*.png panels that feed into it) only
+plot the top 10, ranked by a composite score of validity, proximity, and realism.
+The complete, unfiltered results for every algorithm — including rank and
+whether it made the top 10 — are always written to metrics_full_results.csv.
+
 Features:
-- Real counterfactual algorithms evaluation (32 methods)
+- Real counterfactual algorithms evaluation (36 methods)
 - Comprehensive metrics across all categories
 - Keane et al. (2021) evaluation metrics (validity, proximity, compactness)
+- The single-function cfts.metrics.evaluate.evaluate_counterfactual() suite
+  (the same one used by the cf_imfact comparison scripts), which adds a
+  MASCOTS-style z-score-normalised distance and DTW distance
+- Per-algorithm wall-clock runtime (Runtime_Mean_Seconds / Runtime_Std_Seconds /
+  Runtime_N_Attempts in metrics_full_results.csv), timed around each algorithm
+  call and recorded for every attempt, including failures and timeouts
 - Algorithm benchmarking and comparison
+- Top-10 visualization plus a full-results CSV for every algorithm
 - Professional visualization of results
 - Time series comparison plots (original vs counterfactuals)
 - Statistical analysis of performance
+
+Evaluated instances are drawn from the training split (dataset_train) rather
+than the test split by default — see EVAL_SPLIT in main() to switch back to
+'test'. Algorithms use the same split as their NUN/reference pool.
 """
 
 import os
 import sys
 import signal
+import time
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -98,6 +123,10 @@ import cfts.cf_sparce.sparce as sparce
 import cfts.cf_cem.cem as cem_mod
 import cfts.cf__abstract.abstract as abstract_mod
 import cfts.cf_ts_tweaking.ts_tweaking as ts_tweaking
+import cfts.cf_cfe4mts.cfe4mts as cfe4mts
+import cfts.cf_confetti.confetti as confetti
+import cfts.cf_mascots.mascots as mascots
+import cfts.cf_imfact.imfact as imfact
 
 # Import metrics
 from cfts.metrics import (
@@ -109,6 +138,11 @@ from cfts.metrics import (
 # Import Keane et al. (2021) metrics
 from cfts.metrics.keane import validity, proximity, compactness, evaluate_keane_metrics
 
+# Import the single-function evaluate.py metric suite (validity, proximity,
+# sparsity, realism computed together) — the same function used by the
+# cf_imfact comparison scripts (e.g. cf_imfact/experiments/compare_ucr.py).
+from cfts.metrics.evaluate import evaluate_counterfactual
+
 # Set up plotting
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette("husl")
@@ -116,7 +150,7 @@ sns.set_palette("husl")
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Per-algorithm timeout (seconds). SIGALRM interrupts blocking C/Python code.
-PER_ALGO_TIMEOUT = 120
+PER_ALGO_TIMEOUT = 180
 
 
 def load_forda_data_and_model():
@@ -143,67 +177,68 @@ def load_forda_data_and_model():
     return model, dataset_train, dataset_test
 
 
-def create_algorithm_wrappers(dataset_test, model):
+def create_algorithm_wrappers(dataset, model):
     """Create wrapper functions for counterfactual algorithms with consistent interface."""
     
     def native_guide_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = ng.native_guide_uni_cf(original_ts, model, dataset=dataset_test)
+        cf, _ = ng.native_guide_uni_cf(original_ts, model, dataset=dataset)
         return cf if cf is not None else original_ts
     
     def comte_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = comte.comte_cf(original_ts, dataset_test, model)
+        cf, _ = comte.comte_cf_gradient(original_ts, model, target_class=target_class, dataset=dataset)
         return cf if cf is not None else original_ts
-    
+
     def comte_ts_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = comte.comte_ts_cf(original_ts, dataset_test, model, target_class=target_class)
+        cf, _ = comte.comte_ts_cf_gradient(original_ts, model, target_class=target_class, dataset=dataset)
         return cf if cf is not None else original_ts
-    
+
     def sets_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = sets.sets_cf(original_ts, dataset_test, model)
+        cf, _ = sets.sets_cf(original_ts, model, target_class=target_class, dataset=dataset)
         return cf if cf is not None else original_ts
-    
+
     def moc_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = dandl.moc_cf(original_ts, dataset_test, model)
+        cf, _ = dandl.moc_cf(original_ts, model, target_class=target_class, dataset=dataset)
         return cf if cf is not None else original_ts
-    
+
     def wachter_gradient_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = w.wachter_gradient_cf(original_ts, dataset_test, model)
+        cf, _ = w.wachter_gradient_cf(original_ts, model, target_class=target_class, dataset=dataset)
         return cf if cf is not None else original_ts
-    
+
     def wachter_genetic_wrapper(original_ts, target_class=None, **kwargs):
-        step_size = np.mean(dataset_test.std) + 0.2
+        step_size = np.mean(dataset.std) + 0.2
         cf, _ = w.wachter_genetic_cf(original_ts, model, step_size=step_size, max_steps=100)
         return cf if cf is not None else original_ts
-    
+
     def glacier_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = glacier.glacier_cf(original_ts, dataset_test, model)
+        cf, _ = glacier.glacier_cf(original_ts, model, target_class=target_class, dataset=dataset)
         return cf if cf is not None else original_ts
-    
+
     def multispace_wrapper(original_ts, target_class=None, **kwargs):
         # Multi-SpaCE doesn't support explicit target class, it finds the nearest different class
-        cf, _ = ms.multi_space_cf(original_ts, dataset_test, model, 
+        cf, _ = ms.multispace_fast(original_ts, model, dataset=dataset,
                                   population_size=30,
                                   max_iterations=50,
                                   sparsity_weight=0.3,
                                   validity_weight=0.7,
                                   verbose=False)
         return cf if cf is not None else original_ts
-    
+
     def subspace_wrapper(original_ts, target_class=None, **kwargs):
         # Sub-SpaCE is designed for multivariate time series
         # Check if data is univariate and skip if so
         ts_array = np.asarray(original_ts)
-        
+
         # Determine if univariate: if 1D or if 2D with one dimension being 1
-        is_univariate = (ts_array.ndim == 1 or 
+        is_univariate = (ts_array.ndim == 1 or
                         (ts_array.ndim == 2 and (ts_array.shape[0] == 1 or ts_array.shape[1] == 1)))
-        
+
         if is_univariate:
             raise ValueError("Sub-SpaCE not compatible with univariate data (designed for multivariate time series)")
-        
+
         # For multivariate data, proceed with Sub-SpaCE
-        cf, _ = subspace.subspace_cf(original_ts, dataset_test, model,
-                                     desired_class=target_class,
+        cf, _ = subspace.subspace_cf(original_ts, model,
+                                     target_class=target_class,
+                                     dataset=dataset,
                                      population_size=50,
                                      max_iter=100,
                                      alpha=0.8,
@@ -214,28 +249,31 @@ def create_algorithm_wrappers(dataset_test, model):
                                      reinit=True,
                                      verbose=False)
         return cf if cf is not None else original_ts
-    
-    
+
+
     def tsevo_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = tsevo.tsevo_cf(original_ts, dataset_test, model, 
+        cf, _ = tsevo.tsevo_cf(original_ts, model,
                                target_class=target_class,
+                               dataset=dataset,
                                population_size=30,
                                generations=30,
                                verbose=False)
         return cf if cf is not None else original_ts
-    
+
     def lasts_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = lasts.lasts_cf(original_ts, dataset_test, model, 
+        cf, _ = lasts.lasts_cf(original_ts, model,
                                target_class=target_class,
+                               dataset=dataset,
                                latent_dim=32,
                                n_iterations=200,
                                train_ae_epochs=10,
                                verbose=False)
         return cf if cf is not None else original_ts
-    
+
     def tscf_wrapper(original_ts, target_class=None, **kwargs):
-        cf, _ = tscf.tscf_cf(original_ts, dataset_test, model, 
+        cf, _ = tscf.tscf_cf(original_ts, model,
                             target_class=target_class,
+                            dataset=dataset,
                             lambda_l1=0.01,
                             lambda_l2=0.01,
                             lambda_smooth=0.001,
@@ -243,11 +281,12 @@ def create_algorithm_wrappers(dataset_test, model):
                             max_iterations=500,
                             verbose=False)
         return cf if cf is not None else original_ts
-    
+
     def fastpace_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            cf, _ = fastpace.fastpace_cf(original_ts, dataset_test, model, 
-                                        target=target_class,
+            cf, _ = fastpace.fastpace_cf(original_ts, model,
+                                        target_class=target_class,
+                                        dataset=dataset,
                                         n_planning_steps=10,
                                         intervention_step_size=0.3,
                                         lambda_proximity=1.0,
@@ -257,88 +296,89 @@ def create_algorithm_wrappers(dataset_test, model):
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def time_cf_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            # TIME-CF works better with training data
-            X_train_subset = np.array([dataset_test[i][0] for i in range(min(50, len(dataset_test)))])
-            y_train_subset = np.array([np.argmax(dataset_test[i][1]) if hasattr(dataset_test[i][1], 'shape') and len(dataset_test[i][1].shape) > 0 else dataset_test[i][1] for i in range(min(50, len(dataset_test)))])
-            cf, _ = time_cf.time_cf_generate(original_ts, model, 
-                                            X_train=X_train_subset,
-                                            y_train=y_train_subset,
-                                            target=target_class,
-                                            n_epochs=5,
-                                            n_synthetic=50,
+            # NOTE: time_cf_generate()'s real kwargs are timegan_epochs/M, not
+            # n_epochs/n_synthetic — those silently no-op'd as **unused** kwargs
+            # were never accepted before and raised TypeError on every call,
+            # which the except below swallowed as a plain "failed" result.
+            cf, _ = time_cf.time_cf_generate(original_ts, model,
+                                            target_class=target_class,
+                                            dataset=dataset,
+                                            timegan_epochs=5,
+                                            M=50,
                                             verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def sg_cf_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            cf, _ = sg_cf.sg_cf(original_ts, model, 
-                               target=target_class,
+            cf, _ = sg_cf.sg_cf(original_ts, model,
+                               target_class=target_class,
+                               dataset=dataset,
                                max_iter=200,
                                verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def mg_cf_wrapper(original_ts, target_class=None, **kwargs):
         try:
             # MG-CF with STUMPY optimization for faster motif mining
             from torch.utils.data import Subset
-            subset_size = min(100, len(dataset_test))
-            dataset_subset = Subset(dataset_test, range(subset_size))
-            cf, _ = mg_cf_generate_stumpy(original_ts, dataset_subset, model, 
-                                         target=target_class,
+            subset_size = min(100, len(dataset))
+            dataset_subset = Subset(dataset, range(subset_size))
+            cf, _ = mg_cf_generate_stumpy(original_ts, model, target_class=target_class, dataset=dataset_subset,
                                          top_k=5,
                                          verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def latent_cf_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            cf, _ = latent_cf.latent_cf_generate(original_ts, dataset_test, model, 
-                                                target=target_class,
+            cf, _ = latent_cf.latent_cf_generate(original_ts, model,
+                                                target_class=target_class,
+                                                dataset=dataset,
                                                 latent_dim=8,
                                                 max_iter=100,
                                                 verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def discox_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            cf, _ = discox.discox_generate_cf(original_ts, model, 
-                                             target=target_class,
+            cf, _ = discox.discox_cf(original_ts, model,
+                                             target_class=target_class,
+                                             dataset=dataset,
                                              window_size=20,
-                                             max_attempts=50,
-                                             modification_factor=1.5,
                                              verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def cels_wrapper(original_ts, target_class=None, **kwargs):
         try:
             # CELS requires training data for nearest unlike neighbor
-            X_train = np.array([dataset_test[i][0] for i in range(min(100, len(dataset_test)))])
-            y_train = np.array([dataset_test[i][1] for i in range(min(100, len(dataset_test)))])
+            X_train = np.array([dataset[i][0] for i in range(min(100, len(dataset)))])
+            y_train = np.array([dataset[i][1] for i in range(min(100, len(dataset)))])
             cf, _ = cels.cels_generate(original_ts, model, X_train, y_train,
-                                      target=target_class,
+                                      target_class=target_class,
                                       max_iter=100,
                                       verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def fft_cf_wrapper(original_ts, target_class=None, **kwargs):
         try:
             # Using nearest neighbor FFT blending approach
-            cf, _ = fft_nn_cf(original_ts, dataset_test, model, 
+            cf, _ = fft_nn_cf(original_ts, model,
                             target_class=target_class,
+                            dataset=dataset,
                             k=5,
                             blend_ratio=0.5,
                             frequency_bands="all",
@@ -346,12 +386,12 @@ def create_algorithm_wrappers(dataset_test, model):
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def terce_wrapper(original_ts, target_class=None, **kwargs):
         try:
             # TERCE requires training data for nearest unlike neighbor and rule mining
-            X_train = np.array([dataset_test[i][0] for i in range(min(100, len(dataset_test)))])
-            y_train = np.array([dataset_test[i][1] for i in range(min(100, len(dataset_test)))])
+            X_train = np.array([dataset[i][0] for i in range(min(100, len(dataset)))])
+            y_train = np.array([dataset[i][1] for i in range(min(100, len(dataset)))])
             cf, _ = terce.terce_generate(original_ts, model, X_train, y_train,
                                         target_class=target_class,
                                         n_regions=5,
@@ -360,12 +400,12 @@ def create_algorithm_wrappers(dataset_test, model):
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def ab_cf_wrapper(original_ts, target_class=None, **kwargs):
         try:
             # AB-CF requires training data for nearest unlike neighbor retrieval
-            X_train = np.array([dataset_test[i][0] for i in range(min(100, len(dataset_test)))])
-            y_train = np.array([dataset_test[i][1] for i in range(min(100, len(dataset_test)))])
+            X_train = np.array([dataset[i][0] for i in range(min(100, len(dataset)))])
+            y_train = np.array([dataset[i][1] for i in range(min(100, len(dataset)))])
             cf, _ = ab_cf.ab_cf_generate(original_ts, model, X_train, y_train,
                                         target_class=target_class,
                                         n_segments=10,
@@ -374,44 +414,50 @@ def create_algorithm_wrappers(dataset_test, model):
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def cfwot_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            cf, _ = cfwot.cfwot(original_ts, model,
-                               target=target_class,
+            # cfwot() expects (K, D) = (timesteps, features); the rest of this
+            # harness uses (channels, length) — transpose in and back out, or
+            # every univariate series gets silently read as D=length "features"
+            # of a single timestep and crashes at the model's conv1d call.
+            cf, _ = cfwot.cfwot(original_ts.T, model,
+                               target_class=target_class,
                                M_E=20,
                                M_T=20,
                                verbose=False)
-            return cf if cf is not None else original_ts
+            return cf.T if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def cgm_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            cf, _ = cgm.cgm_generate(original_ts, dataset_test, model,
-                                    target=target_class,
+            cf, _ = cgm.cgm_generate(original_ts, model,
+                                    target_class=target_class,
+                                    dataset=dataset,
                                     latent_dim=16,
                                     max_iter=100,
                                     verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def counts_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            cf, _ = counts.counts_cf_with_pretrained_model(original_ts, dataset_test, model,
-                                                          target=target_class,
+            cf, _ = counts.counts_cf_with_pretrained_model(original_ts, model,
+                                                          target_class=target_class,
+                                                          dataset=dataset,
                                                           latent_dim=16,
                                                           max_iter=100,
                                                           verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
-    
+
     def sparce_wrapper(original_ts, target_class=None, **kwargs):
         try:
             cf, _ = sparce.sparce_gradient_cf(original_ts, model,
-                                             target=target_class,
+                                             target_class=target_class,
                                              max_iter=100,
                                              verbose=False)
             return cf if cf is not None else original_ts
@@ -440,7 +486,7 @@ def create_algorithm_wrappers(dataset_test, model):
     def abstract_cf_wrapper(original_ts, target_class=None, **kwargs):
         try:
             cf, _ = abstract_mod.abstract_cf(
-                original_ts, dataset_test, model, target=target_class,
+                original_ts, model, target_class=target_class, dataset=dataset,
                 max_iter=100,
                 noise_scale=0.05,
                 escalate_every=10,
@@ -453,7 +499,7 @@ def create_algorithm_wrappers(dataset_test, model):
     def ts_tweaking_knn_wrapper(original_ts, target_class=None, **kwargs):
         try:
             cf, _ = ts_tweaking.ts_tweaking_knn_cf(
-                original_ts, dataset_test, model, target=target_class, verbose=False)
+                original_ts, model, target_class=target_class, dataset=dataset, verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
@@ -461,7 +507,7 @@ def create_algorithm_wrappers(dataset_test, model):
     def ts_tweaking_irrev_wrapper(original_ts, target_class=None, **kwargs):
         try:
             cf, _ = ts_tweaking.ts_tweaking_irreversible_cf(
-                original_ts, dataset_test, model, target=target_class, verbose=False)
+                original_ts, model, target_class=target_class, dataset=dataset, verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
@@ -469,7 +515,58 @@ def create_algorithm_wrappers(dataset_test, model):
     def ts_tweaking_rev_wrapper(original_ts, target_class=None, **kwargs):
         try:
             cf, _ = ts_tweaking.ts_tweaking_reversible_cf(
-                original_ts, dataset_test, model, target=target_class, verbose=False)
+                original_ts, model, target_class=target_class, dataset=dataset, verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def cfe4mts_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # CFE4MTS trains a noiser/discriminator per call to match this
+            # harness's single-call signature; kept small to stay within budget.
+            cf, _ = cfe4mts.cfe4mts_cf(original_ts, dataset, model,
+                                      target_class=target_class,
+                                      epochs=20,
+                                      max_train_samples=100,
+                                      verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def confetti_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # confetti_nsga_cf mirrors the official CONFETTI algorithm more
+            # closely than confetti_genetic_cf (NUN search + NSGA-II window search).
+            cf, _ = confetti.confetti_nsga_cf(original_ts, model,
+                                             target_class=target_class,
+                                             dataset=dataset,
+                                             population_size=30,
+                                             max_generations=20,
+                                             max_samples=100,
+                                             seed=42,
+                                             verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def mascots_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = mascots.mascots_cf(original_ts, model,
+                                      target_class=target_class,
+                                      dataset=dataset,
+                                      max_samples=100,
+                                      verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def imfact_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = imfact.imfact_cf(original_ts, model,
+                                    target_class=target_class,
+                                    dataset=dataset,
+                                    max_samples=100,
+                                    verbose=False)
             return cf if cf is not None else original_ts
         except Exception:
             return original_ts
@@ -507,6 +604,10 @@ def create_algorithm_wrappers(dataset_test, model):
         'TS-Tweaking-kNN': ts_tweaking_knn_wrapper,
         'TS-Tweaking-Irrev': ts_tweaking_irrev_wrapper,
         'TS-Tweaking-Rev': ts_tweaking_rev_wrapper,
+        'CFE4MTS': cfe4mts_wrapper,
+        'CONFETTI': confetti_wrapper,
+        'MASCOTS': mascots_wrapper,
+        'IMFACT': imfact_wrapper,
     }
 
 
@@ -529,7 +630,7 @@ def pytorch_model_wrapper(model):
     return model_wrapper
 
 
-def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, dataset_test):
+def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, dataset):
     """Evaluate all algorithms on a single time series instance."""
     print(f"\nEvaluating instance with original class: {label}")
     
@@ -539,11 +640,15 @@ def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, data
     # Generate counterfactuals with each algorithm
     counterfactuals = {}
     successful_algorithms = []
-    
+    # Wall-clock runtime of the algorithm call itself (seconds), recorded for
+    # every attempt — including timeouts and errors — not just successes.
+    runtimes = {}
+
     def _sigalrm_handler(signum, frame):
         raise TimeoutError(f"Algorithm timed out after {PER_ALGO_TIMEOUT}s")
 
     for name, algorithm in tqdm(algorithms.items(), desc="  Generating CFs", leave=False):
+        start_time = time.perf_counter()
         try:
             print(f"  Generating counterfactual with {name}...")
             signal.signal(signal.SIGALRM, _sigalrm_handler)
@@ -552,32 +657,35 @@ def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, data
                 cf = algorithm(original_ts, target_class=target_class)
             finally:
                 signal.alarm(0)  # Cancel alarm regardless of outcome
+            runtimes[name] = time.perf_counter() - start_time
 
             # Check if prediction actually changed
             original_pred = model_wrapper(original_ts)
             cf_pred = model_wrapper(cf)
-            
+
             original_class = np.argmax(original_pred)
             cf_class = np.argmax(cf_pred)
-            
+
             if cf_class == target_class:
                 counterfactuals[name] = cf
                 successful_algorithms.append(name)
-                print(f"    ✓ Success: {original_class} → {cf_class}")
+                print(f"    ✓ Success: {original_class} → {cf_class} ({runtimes[name]:.2f}s)")
             else:
-                print(f"    ✗ Failed: {original_class} → {cf_class} (target: {target_class})")
-                
+                print(f"    ✗ Failed: {original_class} → {cf_class} (target: {target_class}, {runtimes[name]:.2f}s)")
+
         except TimeoutError as e:
+            runtimes[name] = time.perf_counter() - start_time
             print(f"    ✗ Timeout: {name} — {str(e)}")
         except Exception as e:
+            runtimes[name] = time.perf_counter() - start_time
             print(f"    ✗ Error with {name}: {str(e)}")
-    
+
     if not counterfactuals:
         print("  No successful counterfactuals generated!")
         return None
     
     # Initialize evaluator with reference data
-    reference_data = np.array([dataset_test.X[i] for i in range(min(100, len(dataset_test.X)))])
+    reference_data = np.array([dataset.X[i] for i in range(min(100, len(dataset.X)))])
     evaluator = CounterfactualEvaluator(reference_data=reference_data)
     
     # Evaluate each counterfactual
@@ -615,14 +723,38 @@ def evaluate_single_instance(original_ts, label, model_wrapper, algorithms, data
         'counterfactuals': counterfactuals,
         'individual_results': results,
         'diversity_results': diversity_results,
-        'successful_algorithms': successful_algorithms
+        'successful_algorithms': successful_algorithms,
+        'runtimes': runtimes
     }
 
 
-def create_results_visualization(all_results, output_dir='./'):
-    """Create one plot per metric category and save each as a separate PNG."""
+def compute_runtime_dataframe(all_results):
+    """Collect per-instance algorithm runtimes (seconds) into a long-format DataFrame.
 
-    # Collect all individual metrics
+    Unlike compute_metrics_dataframe(), this includes every algorithm *attempt*
+    (successes, failures, and timeouts alike) — runtime is measured around the
+    algorithm call itself, before the success/failure check.
+    """
+    all_runtime_data = []
+    for instance_idx, instance_results in enumerate(all_results):
+        if instance_results is None:
+            continue
+
+        for algorithm, elapsed in instance_results.get('runtimes', {}).items():
+            all_runtime_data.append({
+                'Instance': instance_idx,
+                'Algorithm': algorithm,
+                'Runtime': elapsed
+            })
+
+    if not all_runtime_data:
+        return None
+
+    return pd.DataFrame(all_runtime_data)
+
+
+def compute_metrics_dataframe(all_results):
+    """Collect all individual per-instance metrics into one long-format DataFrame."""
     all_metrics_data = []
     for instance_idx, instance_results in enumerate(all_results):
         if instance_results is None:
@@ -638,10 +770,59 @@ def create_results_visualization(all_results, output_dir='./'):
                 })
 
     if not all_metrics_data:
+        return None
+
+    return pd.DataFrame(all_metrics_data)
+
+
+def rank_algorithms(summary_stats, algorithm_names,
+                     key_metrics=('prediction_change', 'normalized_distance', 'temporal_consistency')):
+    """
+    Rank algorithms by a composite score combining validity (prediction_change),
+    proximity (inverted normalized_distance, since lower is better), and realism
+    (temporal_consistency).
+
+    Returns a list of (algorithm_name, score) tuples, best (highest score) first.
+    """
+    algorithm_scores = {}
+    for algorithm in algorithm_names:
+        scores = []
+        for metric in key_metrics:
+            try:
+                if metric == 'normalized_distance':
+                    # Lower is better - invert for ranking
+                    score = 1 / (1 + summary_stats.loc[(algorithm, metric), 'mean'])
+                else:
+                    # prediction_change / temporal_consistency: higher is better
+                    score = summary_stats.loc[(algorithm, metric), 'mean']
+                scores.append(score)
+            except KeyError:
+                continue
+
+        if scores:
+            algorithm_scores[algorithm] = np.mean(scores)
+
+    return sorted(algorithm_scores.items(), key=lambda x: x[1], reverse=True)
+
+
+def create_results_visualization(df, output_dir='./', top_algorithms=None):
+    """
+    Create one plot per metric category and save each as a separate PNG.
+
+    Args:
+        df: long-format metrics DataFrame from compute_metrics_dataframe().
+        output_dir: directory to save the plots.
+        top_algorithms: optional ordered list of algorithm names to restrict
+            the plots to (e.g. the best N by composite score). Summary
+            statistics are still computed over the *full* df regardless, so
+            callers can export complete results even when the plots are
+            capped.
+    """
+    if df is None or df.empty:
         print("No results to visualize!")
         return [], None
 
-    df = pd.DataFrame(all_metrics_data)
+    plot_df = df if top_algorithms is None else df[df['Algorithm'].isin(top_algorithms)]
 
     # One figure per metric category
     metric_categories = {
@@ -652,9 +833,13 @@ def create_results_visualization(all_results, output_dir='./'):
                       'autocorr_preservation', 'statistical_similarity'],
     }
 
+    # Preserve rank order (best first) on the x-axis when a top-N list is given,
+    # otherwise fall back to the previous alphabetical ordering.
+    algo_order = list(top_algorithms) if top_algorithms is not None else None
+
     output_filenames = []
     for category_name, metric_list in metric_categories.items():
-        cat_data = df[df['Metric'].isin(metric_list)]
+        cat_data = plot_df[plot_df['Metric'].isin(metric_list)]
         if cat_data.empty:
             continue
 
@@ -674,16 +859,19 @@ def create_results_visualization(all_results, output_dir='./'):
             squeeze=False,
         )
 
+        title_suffix = f' — Top {len(algo_order)}' if algo_order is not None else ''
         fig.suptitle(
-            f'{category_name} Metrics — Counterfactual Algorithm Comparison',
+            f'{category_name} Metrics — Counterfactual Algorithm Comparison{title_suffix}',
             fontweight='bold', fontsize=15, y=1.01,
         )
 
         for row, metric_name in enumerate(present_metrics):
             ax = axes[row, 0]
             metric_data = cat_data[cat_data['Metric'] == metric_name]
-            sns.boxplot(data=metric_data, x='Algorithm', y='Value', ax=ax,
-                        order=sorted(metric_data['Algorithm'].unique()))
+            present_algos = set(metric_data['Algorithm'].unique())
+            order = ([a for a in algo_order if a in present_algos] if algo_order is not None
+                      else sorted(present_algos))
+            sns.boxplot(data=metric_data, x='Algorithm', y='Value', ax=ax, order=order)
             ax.set_title(metric_name.replace('_', ' ').title(), fontweight='bold', fontsize=12)
             ax.set_xlabel('')
             ax.set_ylabel('Value', fontsize=10)
@@ -698,7 +886,8 @@ def create_results_visualization(all_results, output_dir='./'):
         print(f"\n{category_name} metrics plot saved as: {fname}")
         output_filenames.append(fname)
 
-    # Summary statistics table
+    # Summary statistics table — computed over the FULL (unfiltered) df so
+    # nothing is lost even when the plots above are capped to top_algorithms.
     summary_stats = df.groupby(['Algorithm', 'Metric'])['Value'].agg(
         ['mean', 'std', 'median']).round(3)
     print("\n=== Summary Statistics ===")
@@ -881,13 +1070,16 @@ def evaluate_keane_metrics_batch(original_ts_list, all_results, model_wrapper, t
     return None
 
 
-def visualize_keane_metrics(df_keane, output_dir='./'):
+def visualize_keane_metrics(df_keane, output_dir='./', top_algorithms=None):
     """
     Create one plot per Keane et al. (2021) metric, each saved as a separate PNG.
 
     Args:
         df_keane: DataFrame with Keane metrics
         output_dir: Directory to save the plots
+        top_algorithms: optional list of algorithm names to restrict the bars
+            to (e.g. the best N by composite score). df_keane itself is left
+            untouched so callers can still export the full table elsewhere.
 
     Returns:
         List of paths to saved plots
@@ -896,9 +1088,16 @@ def visualize_keane_metrics(df_keane, output_dir='./'):
         print("No Keane metrics to visualize!")
         return []
 
-    algorithms = df_keane['Algorithm'].tolist()
+    plot_keane = (df_keane if top_algorithms is None
+                  else df_keane[df_keane['Algorithm'].isin(top_algorithms)])
+    if plot_keane.empty:
+        print("No Keane metrics left to visualize after filtering to top_algorithms!")
+        return []
+
+    algorithms = plot_keane['Algorithm'].tolist()
     colors = plt.cm.Set2(np.linspace(0, 1, len(algorithms)))
     output_filenames = []
+    title_suffix = f' — Top {len(algorithms)}' if top_algorithms is not None else ''
 
     metric_specs = [
         ('Validity',    'Validity Score',        'keane_validity.png',    True),
@@ -908,10 +1107,10 @@ def visualize_keane_metrics(df_keane, output_dir='./'):
 
     for col, xlabel, filename, higher_better in metric_specs:
         fig, ax = plt.subplots(figsize=(10, max(4, 0.45 * len(algorithms))))
-        bars = ax.barh(algorithms, df_keane[col], color=colors, alpha=0.8, edgecolor='black')
+        bars = ax.barh(algorithms, plot_keane[col], color=colors, alpha=0.8, edgecolor='black')
         ax.set_xlabel(xlabel, fontweight='bold', fontsize=11)
         direction = '(Higher is Better)' if higher_better else '(Lower is Better)'
-        ax.set_title(f'Keane et al. (2021) — {col}\n{direction}',
+        ax.set_title(f'Keane et al. (2021) — {col}{title_suffix}\n{direction}',
                      fontweight='bold', fontsize=13)
         if higher_better:
             ax.set_xlim(0, 1)
@@ -920,7 +1119,7 @@ def visualize_keane_metrics(df_keane, output_dir='./'):
 
         # Value labels
         x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
-        for i, (bar, val) in enumerate(zip(bars, df_keane[col])):
+        for i, (bar, val) in enumerate(zip(bars, plot_keane[col])):
             fmt = f'{val:.1%}' if higher_better else f'{val:.3f}'
             ax.text(val + 0.02 * x_range, i, fmt, va='center', fontsize=9)
 
@@ -929,6 +1128,143 @@ def visualize_keane_metrics(df_keane, output_dir='./'):
         plt.savefig(fpath, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
         plt.close()
         print(f"\nKeane {col} plot saved as: {fpath}")
+        output_filenames.append(fpath)
+
+    return output_filenames
+
+
+def evaluate_full_metrics_batch(original_ts_list, all_results, model_wrapper,
+                                 target_classes_list, reference_data):
+    """
+    Evaluate the cfts.metrics.evaluate.evaluate_counterfactual() metric suite
+    across all algorithms.
+
+    This is the same single-call function used by the cf_imfact comparison
+    scripts (e.g. cf_imfact/experiments/compare_ucr.py). It reports validity,
+    proximity, sparsity, and realism together, and includes a few metrics
+    evaluate_keane_metrics_batch() does not: a MASCOTS-style z-score
+    normalised distance, DTW distance, and Keane-naming aliases.
+
+    Args:
+        original_ts_list: List of original time series (one per instance).
+        all_results: List of per-instance evaluation results (from
+            evaluate_single_instance()), aligned with original_ts_list.
+        model_wrapper: Model wrapper function.
+        target_classes_list: List of target classes, aligned with
+            original_ts_list.
+        reference_data: Reference dataset used for the range_validity metric.
+
+    Returns:
+        DataFrame with one row per algorithm (mean of every
+        evaluate_counterfactual() metric across instances), or None if no
+        counterfactuals were available.
+    """
+    print("\n=== Evaluating evaluate.py Metrics (evaluate_counterfactual) ===")
+    print("cfts/metrics/evaluate.py — same metric suite used by the cf_imfact")
+    print("comparison scripts (validity, proximity, sparsity, realism).\n")
+
+    # Group (original, counterfactual, target_class) triples by algorithm.
+    algorithm_pairs = {}
+    for orig_ts, result, target_class in zip(original_ts_list, all_results, target_classes_list):
+        if result is None or not result.get('counterfactuals'):
+            continue
+        for algorithm_name, cf_ts in result['counterfactuals'].items():
+            algorithm_pairs.setdefault(algorithm_name, []).append((orig_ts, cf_ts, target_class))
+
+    if not algorithm_pairs:
+        print("No counterfactuals available for evaluate_counterfactual metrics evaluation!")
+        return None
+
+    per_instance_rows = []
+    for algorithm_name in sorted(algorithm_pairs.keys()):
+        pairs = algorithm_pairs[algorithm_name]
+        print(f"\nEvaluating {algorithm_name}: {len(pairs)} counterfactual(s)")
+        for orig_ts, cf_ts, target_class in pairs:
+            try:
+                metrics = evaluate_counterfactual(
+                    orig_ts, cf_ts, model=model_wrapper,
+                    target_class=int(target_class),
+                    reference_data=reference_data,
+                )
+                metrics['Algorithm'] = algorithm_name
+                per_instance_rows.append(metrics)
+            except Exception as e:
+                print(f"  ✗ Error evaluating {algorithm_name}: {str(e)}")
+
+    if not per_instance_rows:
+        print("No metrics computed via evaluate_counterfactual!")
+        return None
+
+    df_per_instance = pd.DataFrame(per_instance_rows)
+    n_samples = df_per_instance.groupby('Algorithm').size().rename('N_Samples')
+    df_full = df_per_instance.groupby('Algorithm').mean(numeric_only=True).round(4)
+    df_full = df_full.join(n_samples).reset_index()
+    if 'validity' in df_full.columns:
+        df_full = df_full.sort_values('validity', ascending=False, ignore_index=True)
+
+    print("\n" + "="*70)
+    print("evaluate_counterfactual() Metrics Summary (mean per algorithm)")
+    print("="*70)
+    print(df_full.to_string(index=False))
+    print("="*70)
+
+    return df_full
+
+
+def visualize_full_metrics(df_full, output_dir='./', top_algorithms=None):
+    """
+    Bar-chart panels for the evaluate_counterfactual() metrics that aren't
+    already covered by metrics_*.png / keane_*.png: the MASCOTS-style
+    z-score-normalised distance and DTW distance.
+
+    Args:
+        df_full: DataFrame from evaluate_full_metrics_batch().
+        output_dir: Directory to save the plots.
+        top_algorithms: optional list of algorithm names to restrict the
+            bars to (e.g. the best N by composite score).
+
+    Returns:
+        List of paths to saved plots.
+    """
+    if df_full is None or df_full.empty:
+        print("No evaluate_counterfactual metrics to visualize!")
+        return []
+
+    plot_df = (df_full if top_algorithms is None
+               else df_full[df_full['Algorithm'].isin(top_algorithms)])
+    if plot_df.empty:
+        print("No evaluate_counterfactual metrics left to visualize after filtering to top_algorithms!")
+        return []
+
+    algorithms = plot_df['Algorithm'].tolist()
+    colors = plt.cm.Set2(np.linspace(0, 1, len(algorithms)))
+    output_filenames = []
+    title_suffix = f' — Top {len(algorithms)}' if top_algorithms is not None else ''
+
+    metric_specs = [
+        ('euclidean_dist_zscore', 'Z-score Normalised L2 Distance (MASCOTS-style)', 'evalpy_euclidean_zscore.png'),
+        ('dtw_distance', 'DTW Distance', 'evalpy_dtw_distance.png'),
+    ]
+
+    for col, xlabel, filename in metric_specs:
+        if col not in plot_df.columns or plot_df[col].isna().all():
+            continue
+        fig, ax = plt.subplots(figsize=(10, max(4, 0.45 * len(algorithms))))
+        bars = ax.barh(algorithms, plot_df[col], color=colors, alpha=0.8, edgecolor='black')
+        ax.set_xlabel(xlabel, fontweight='bold', fontsize=11)
+        ax.set_title(f'evaluate_counterfactual() — {xlabel}{title_suffix}\n(Lower is Better)',
+                     fontweight='bold', fontsize=13)
+        ax.grid(True, alpha=0.3, axis='x')
+
+        x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+        for i, (bar, val) in enumerate(zip(bars, plot_df[col])):
+            ax.text(val + 0.02 * x_range, i, f'{val:.3f}', va='center', fontsize=9)
+
+        plt.tight_layout()
+        fpath = os.path.join(output_dir, filename)
+        plt.savefig(fpath, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+        plt.close()
+        print(f"\nevaluate_counterfactual {xlabel} plot saved as: {fpath}")
         output_filenames.append(fpath)
 
     return output_filenames
@@ -995,6 +1331,116 @@ def combine_png_files(file_list, output_path, delete_individual=True):
     return output_path
 
 
+def export_full_metrics_csv(summary_stats, df_keane, ranked_algorithms, top_n, output_path,
+                             all_algorithm_names=None, df_evalpy=None, df_runtime=None):
+    """
+    Write one CSV row per algorithm with its aggregate metrics, Keane scores,
+    evaluate.py (evaluate_counterfactual) scores, runtime, and composite rank —
+    the complete results table, including algorithms that fall outside the
+    top_n shown in metrics_combined.png.
+
+    Algorithms that were prepared (present in ``all_algorithm_names``) but never
+    produced a single successful counterfactual across any evaluated instance
+    never enter ``summary_stats`` / ``df_keane`` / ``df_evalpy`` / ``ranked_algorithms``
+    — they still get a row here, with ``CompositeScore=0``, no Rank, and blank
+    metric columns (there is no data to report, only the fact that they failed).
+    Runtime is the exception: it's recorded for every attempt (see df_runtime),
+    so even an algorithm that never succeeded can still get a runtime figure.
+
+    Args:
+        summary_stats: full (Algorithm, Metric) -> mean/std/median DataFrame
+            from create_results_visualization(), computed over ALL algorithms.
+        df_keane: full Keane et al. (2021) metrics DataFrame (all algorithms).
+        ranked_algorithms: list of (algorithm_name, composite_score) tuples,
+            best first, from rank_algorithms().
+        top_n: how many top-ranked algorithms are shown in metrics_combined.png;
+            used to fill the ShownInCombinedPlot column.
+        output_path: path to write the CSV to.
+        all_algorithm_names: every algorithm name that was prepared for
+            evaluation (e.g. ``algorithms.keys()``), including ones that
+            failed on every instance and so are absent from the other
+            arguments. When given, those algorithms still get a CSV row.
+        df_evalpy: full evaluate.py (evaluate_counterfactual) metrics DataFrame
+            from evaluate_full_metrics_batch() (all algorithms), or None to
+            skip these columns.
+        df_runtime: long-format (Instance, Algorithm, Runtime) DataFrame from
+            compute_runtime_dataframe() (all algorithms, every attempt —
+            successes, failures, and timeouts), or None to skip these columns.
+
+    Returns:
+        output_path
+    """
+    rank_map = {name: i + 1 for i, (name, _) in enumerate(ranked_algorithms)}
+    score_map = dict(ranked_algorithms)
+
+    metrics_wide = None
+    if summary_stats is not None and not summary_stats.empty:
+        metrics_wide = summary_stats['mean'].unstack('Metric')
+
+    keane_by_algo = {} if df_keane is None else df_keane.set_index('Algorithm').to_dict('index')
+    evalpy_by_algo = {} if df_evalpy is None else df_evalpy.set_index('Algorithm').to_dict('index')
+
+    runtime_by_algo = {}
+    if df_runtime is not None and not df_runtime.empty:
+        runtime_stats = df_runtime.groupby('Algorithm')['Runtime'].agg(['mean', 'std', 'count'])
+        runtime_by_algo = runtime_stats.to_dict('index')
+
+    all_algorithms = set(rank_map)
+    if metrics_wide is not None:
+        all_algorithms |= set(metrics_wide.index)
+    all_algorithms |= set(keane_by_algo)
+    all_algorithms |= set(evalpy_by_algo)
+    all_algorithms |= set(runtime_by_algo)
+    if all_algorithm_names is not None:
+        all_algorithms |= set(all_algorithm_names)
+
+    rows = []
+    for algorithm in all_algorithms:
+        row = {
+            'Algorithm': algorithm,
+            'Rank': rank_map.get(algorithm),
+            # Algorithms with no ranked score never succeeded on any instance —
+            # score 0 (rather than blank) so they still sort/compare cleanly.
+            'CompositeScore': score_map.get(algorithm, 0.0),
+            'ShownInCombinedPlot': rank_map.get(algorithm, top_n + 1) <= top_n,
+        }
+
+        keane_row = keane_by_algo.get(algorithm)
+        if keane_row:
+            row['Keane_Validity'] = keane_row.get('Validity')
+            row['Keane_Proximity'] = keane_row.get('Proximity')
+            row['Keane_Compactness'] = keane_row.get('Compactness')
+            row['N_Samples'] = keane_row.get('N_Samples')
+
+        if metrics_wide is not None and algorithm in metrics_wide.index:
+            for metric_name, value in metrics_wide.loc[algorithm].items():
+                row[f'mean_{metric_name}'] = value
+
+        evalpy_row = evalpy_by_algo.get(algorithm)
+        if evalpy_row:
+            for metric_name, value in evalpy_row.items():
+                if metric_name == 'N_Samples':
+                    row['evalpy_N_Samples'] = value
+                else:
+                    row[f'evalpy_{metric_name}'] = value
+
+        runtime_row = runtime_by_algo.get(algorithm)
+        if runtime_row:
+            row['Runtime_Mean_Seconds'] = runtime_row.get('mean')
+            row['Runtime_Std_Seconds'] = runtime_row.get('std')
+            row['Runtime_N_Attempts'] = runtime_row.get('count')
+
+        rows.append(row)
+
+    df_full = pd.DataFrame(rows).sort_values(
+        by='Rank', na_position='last', ignore_index=True
+    )
+    df_full.to_csv(output_path, index=False)
+    print(f"\nFull results for all {len(df_full)} algorithms saved as: {output_path}")
+    print(f"  (metrics_combined.png shows only the top {top_n} by composite score)")
+    return output_path
+
+
 def main():
     """Main execution function."""
     print("=== Comprehensive Counterfactual Metrics Evaluation ===\n")
@@ -1007,31 +1453,38 @@ def main():
     except Exception as e:
         print(f"❌ Error loading model or data: {e}")
         return
-    
+
+    # Which split to draw instances from, and which split algorithms use as
+    # their NUN/reference pool (dataset= kwarg in create_algorithm_wrappers).
+    # Set to 'test' to restore the original behaviour.
+    EVAL_SPLIT = 'train'
+    eval_dataset = dataset_train if EVAL_SPLIT == 'train' else dataset_test
+    print(f"✓ Evaluating on the '{EVAL_SPLIT}' split ({len(eval_dataset.X)} instances available)")
+
     # Create algorithm wrappers
-    algorithms = create_algorithm_wrappers(dataset_test, model)
+    algorithms = create_algorithm_wrappers(eval_dataset, model)
     print(f"✓ {len(algorithms)} algorithms prepared")
-    
-    # Select test instances (diverse examples)
+
+    # Select instances (diverse examples) from the chosen split
     n_instances = 3  # Evaluate on 3 instances
-    test_indices = np.random.choice(len(dataset_test.X), n_instances, replace=False)
-    
-    print(f"\n=== Evaluating {n_instances} test instances ===")
-    
+    instance_indices = np.random.choice(len(eval_dataset.X), n_instances, replace=False)
+
+    print(f"\n=== Evaluating {n_instances} {EVAL_SPLIT} instances ===")
+
     all_results = []
     original_ts_list = []  # Store original time series for visualization
-    target_classes_list = []  # Store target classes for Keane metrics
-    
-    for i, idx in tqdm(enumerate(test_indices), total=n_instances, desc="Evaluating instances"):
-        original_ts = dataset_test.X[idx]
-        label = np.argmax(dataset_test.y[idx])
+    target_classes_list = []  # Store target classes for Keane/evaluate.py metrics
+
+    for i, idx in tqdm(enumerate(instance_indices), total=n_instances, desc="Evaluating instances"):
+        original_ts = eval_dataset.X[idx]
+        label = np.argmax(eval_dataset.y[idx])
         target_class = 1 - label  # Binary classification
-        
+
         original_ts_list.append(original_ts)  # Save for visualization
-        target_classes_list.append(target_class)  # Save for Keane metrics
-        
+        target_classes_list.append(target_class)  # Save for Keane/evaluate.py metrics
+
         print(f"\n--- Instance {i+1}/{n_instances} (Index: {idx}) ---")
-        result = evaluate_single_instance(original_ts, label, model_wrapper, algorithms, dataset_test)
+        result = evaluate_single_instance(original_ts, label, model_wrapper, algorithms, eval_dataset)
         all_results.append(result)
     
     # Filter out None results
@@ -1043,86 +1496,106 @@ def main():
     
     print(f"\n✓ Successfully evaluated {len(valid_results)} instances")
     
+    # Cap how many algorithms get plotted into metrics_combined.png; the
+    # complete, unfiltered results for every algorithm always go to CSV
+    # (see export_full_metrics_csv below).
+    TOP_N = 10
+
     # Create visualizations and summary
     try:
-        # Create metrics visualization
-        output_filenames, summary_stats = create_results_visualization(valid_results)
-        
-        # Evaluate Keane et al. (2021) metrics
-        df_keane = evaluate_keane_metrics_batch(original_ts_list, all_results, 
+        # Build the full per-instance metrics table and rank algorithms on it
+        # up front, so we know which ones to plot before any plotting happens.
+        df = compute_metrics_dataframe(valid_results)
+        ranked_algorithms = []
+        top_algorithms = None
+        if df is not None and not df.empty:
+            summary_stats_for_ranking = df.groupby(['Algorithm', 'Metric'])['Value'].agg(
+                ['mean', 'std', 'median']).round(3)
+            ranked_algorithms = rank_algorithms(summary_stats_for_ranking, algorithms.keys())
+            top_algorithms = [name for name, _ in ranked_algorithms[:TOP_N]]
+            print(f"\n✓ Ranked {len(ranked_algorithms)} algorithms; "
+                  f"plotting the top {len(top_algorithms)} in metrics_combined.png")
+
+        # Create metrics visualization (only top_algorithms are plotted, but
+        # summary_stats is still computed over ALL algorithms internally)
+        output_filenames, summary_stats = create_results_visualization(df, top_algorithms=top_algorithms)
+
+        # Evaluate Keane et al. (2021) metrics (all algorithms)
+        df_keane = evaluate_keane_metrics_batch(original_ts_list, all_results,
                                                 model_wrapper, target_classes_list)
-        
-        # Visualize Keane metrics
+
+        # Visualize Keane metrics (only top_algorithms are plotted)
         keane_filenames = []
         if df_keane is not None:
-            keane_filenames = visualize_keane_metrics(df_keane)
+            keane_filenames = visualize_keane_metrics(df_keane, top_algorithms=top_algorithms)
+
+        # Evaluate the evaluate.py (evaluate_counterfactual) metric suite (all algorithms)
+        reference_data = np.array([eval_dataset.X[i] for i in range(min(100, len(eval_dataset.X)))])
+        df_evalpy = evaluate_full_metrics_batch(original_ts_list, all_results,
+                                                 model_wrapper, target_classes_list,
+                                                 reference_data)
+
+        # Visualize evaluate.py metrics not already covered above (only top_algorithms plotted)
+        evalpy_filenames = []
+        if df_evalpy is not None:
+            evalpy_filenames = visualize_full_metrics(df_evalpy, top_algorithms=top_algorithms)
 
         # Combine all metric plots into one image
-        all_plot_files = list(output_filenames) + list(keane_filenames)
+        all_plot_files = list(output_filenames) + list(keane_filenames) + list(evalpy_filenames)
         combine_png_files(all_plot_files, os.path.join('./', 'metrics_combined.png'))
-        
+
+        # Collect algorithm runtimes (all algorithms, every attempt — successes,
+        # failures, and timeouts alike).
+        df_runtime = compute_runtime_dataframe(all_results)
+
+        # Export the complete, unfiltered results (every algorithm, not just
+        # the top_algorithms shown above) to CSV.
+        export_full_metrics_csv(
+            summary_stats, df_keane, ranked_algorithms, TOP_N,
+            os.path.join('./', 'metrics_full_results.csv'),
+            all_algorithm_names=algorithms.keys(),
+            df_evalpy=df_evalpy,
+            df_runtime=df_runtime,
+        )
+
         # Calculate algorithm success rates
         print("\n=== Algorithm Success Rates ===")
         algorithm_success = {}
         for result in valid_results:
             for algorithm in result['successful_algorithms']:
                 algorithm_success[algorithm] = algorithm_success.get(algorithm, 0) + 1
-        
+
         for algorithm, successes in algorithm_success.items():
             success_rate = successes / len(valid_results) * 100
             print(f"{algorithm}: {successes}/{len(valid_results)} ({success_rate:.1f}%)")
-        
+
         # Overall performance summary
         print("\n=== Overall Performance Summary ===")
-        if summary_stats is not None and not summary_stats.empty:
-            # Focus on key metrics for ranking
-            key_metrics = ['prediction_change', 'normalized_distance', 'temporal_consistency']
-            
-            algorithm_scores = {}
-            for algorithm in algorithms.keys():
-                scores = []
-                for metric in key_metrics:
-                    try:
-                        if metric == 'prediction_change':
-                            # Higher is better
-                            score = summary_stats.loc[(algorithm, metric), 'mean']
-                            scores.append(score)
-                        elif metric == 'normalized_distance':
-                            # Lower is better - invert for ranking
-                            score = 1 / (1 + summary_stats.loc[(algorithm, metric), 'mean'])
-                            scores.append(score)
-                        elif metric == 'temporal_consistency':
-                            # Higher is better
-                            score = summary_stats.loc[(algorithm, metric), 'mean']
-                            scores.append(score)
-                    except KeyError:
-                        continue
-                
-                if scores:
-                    algorithm_scores[algorithm] = np.mean(scores)
-            
-            # Rank algorithms
-            ranked_algorithms = sorted(algorithm_scores.items(), key=lambda x: x[1], reverse=True)
-            
+        if ranked_algorithms:
             print("Algorithm Rankings (based on validity, proximity, and realism):")
             for i, (algorithm, score) in enumerate(ranked_algorithms, 1):
-                print(f"{i}. {algorithm}: {score:.3f}")
-        
+                shown = " [shown in metrics_combined.png]" if algorithm in (top_algorithms or []) else ""
+                print(f"{i}. {algorithm}: {score:.3f}{shown}")
+
     except Exception as e:
         print(f"❌ Error creating visualizations: {e}")
         import traceback
         traceback.print_exc()
-    
+
     print("\n=== Evaluation Complete ===")
+    print(f"Evaluated on the '{EVAL_SPLIT}' split.")
     print("Generated outputs:")
-    print("  - metrics_combined.png  (ALL metrics and Keane panels in one file)")
-    print("  - metrics_validity.png (validity metric comparisons)")
-    print("  - metrics_proximity.png (proximity metric comparisons)")
-    print("  - metrics_sparsity.png (sparsity metric comparisons)")
-    print("  - metrics_realism.png (realism metric comparisons)")
-    print("  - keane_validity.png (Keane validity)")
-    print("  - keane_proximity.png (Keane proximity)")
-    print("  - keane_compactness.png (Keane compactness)")
+    print(f"  - metrics_combined.png  (top {TOP_N} algorithms' metrics, Keane, and evaluate.py panels in one file)")
+    print("  - metrics_validity.png (validity metric comparisons, top algorithms)")
+    print("  - metrics_proximity.png (proximity metric comparisons, top algorithms)")
+    print("  - metrics_sparsity.png (sparsity metric comparisons, top algorithms)")
+    print("  - metrics_realism.png (realism metric comparisons, top algorithms)")
+    print("  - keane_validity.png (Keane validity, top algorithms)")
+    print("  - keane_proximity.png (Keane proximity, top algorithms)")
+    print("  - keane_compactness.png (Keane compactness, top algorithms)")
+    print("  - evalpy_euclidean_zscore.png (evaluate.py z-score-normalised distance, top algorithms)")
+    print("  - evalpy_dtw_distance.png (evaluate.py DTW distance, top algorithms)")
+    print("  - metrics_full_results.csv (full ranked results for ALL algorithms, incl. evalpy_* and Runtime_* columns)")
     print("\nKeane et al. (2021) Reference:")
     print("  Keane, M. T., Kenny, E. M., Delaney, E., & Smyth, B. (2021).")
     print("  If only we had better counterfactual explanations: Five key deficits")

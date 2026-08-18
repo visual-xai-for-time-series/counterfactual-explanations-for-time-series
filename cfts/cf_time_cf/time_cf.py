@@ -501,7 +501,7 @@ def crop_synthetic_shapelet(synthetic_sample, start, length, channel=0):
 # Time-CF Main Algorithm
 # ============================================================================
 
-def time_cf_generate(sample, dataset, model, target_class=None,
+def time_cf_generate(sample, model, target_class=None, dataset=None,
                     n_shapelets=10, M=32, min_shapelet_length=5,
                     max_shapelet_length=None, n_shapelet_candidates=100,
                     timegan_epochs=100, timegan_batch_size=128,
@@ -523,9 +523,9 @@ def time_cf_generate(sample, dataset, model, target_class=None,
     
     Args:
         sample: Time series instance to explain (channels, length) or (length,)
-        dataset: Training dataset for shapelet extraction and TimeGAN training
         model: Trained classifier model
         target_class: Target class (optional)
+        dataset: Training dataset for shapelet extraction and TimeGAN training (required)
         n_shapelets: Number of top shapelets to use (N in paper)
         M: Number of synthetic instances to generate
         min_shapelet_length: Minimum shapelet length
@@ -541,12 +541,14 @@ def time_cf_generate(sample, dataset, model, target_class=None,
     Returns:
         Tuple of (counterfactual, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("time_cf_generate requires a dataset for shapelet extraction and TimeGAN training.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+
     model.to(device)
     model.eval()
-    
+
     # Prepare sample
     sample_orig = sample.copy()
     if sample.ndim == 1:
@@ -722,25 +724,212 @@ def time_cf_generate(sample, dataset, model, target_class=None,
     return cf_result, best_cf['proba']
 
 
-def time_cf_explain(sample, dataset, model, target_class=None,
+# Shapelets only depend on the training set: id(dataset) -> (X_train, y_train, shapelets)
+_TIME_CF_SHAPELET_CACHE = {}
+# The TimeGAN is trained on every class OTHER than the query's original
+# class, so it (and the synthetic samples drawn from it) only depend on
+# (dataset, original_class), not on the specific query sample:
+# (id(dataset), original_class) -> (embedder, recovery, generator, supervisor,
+#                                    discriminator, n_features, seq_len_gan, synthetic_samples)
+_TIME_CF_GAN_CACHE = {}
+
+
+def time_cf_generate_fast(sample, model, target_class=None, dataset=None,
+                         n_shapelets=10, M=32, min_shapelet_length=5,
+                         max_shapelet_length=None, n_shapelet_candidates=100,
+                         timegan_epochs=100, timegan_batch_size=128,
+                         timegan_hidden_dim=24, timegan_n_layers=3,
+                         device=None, verbose=False):
+    """
+    Faster, result-equivalent version of time_cf_generate().
+
+    time_cf_generate() re-extracts shapelets and re-trains a full TimeGAN
+    (embedder + recovery + generator + supervisor + discriminator, ~100
+    epochs by default) from scratch on every single call — but neither step
+    actually depends on the specific query sample:
+      - shapelet extraction only depends on the training set;
+      - the TimeGAN is trained on every class OTHER than the query's
+        original class, so it only depends on (training set, original_class).
+
+    This caches both, so evaluating multiple query instances against the
+    same dataset pays the shapelet-extraction cost once, and the (dominant)
+    TimeGAN training cost once per distinct original_class encountered
+    (e.g. at most twice for a binary classifier) instead of once per query.
+    See cf_time_cf/time_cf_forda_comparison.ipynb for the measured effect.
+    Steps 5-9 (crop synthetic shapelets into the query sample, test, pick
+    the best) are cheap and still run per-query, unchanged from
+    time_cf_generate().
+
+    Args/Returns: identical to time_cf_generate().
+    """
+    if dataset is None:
+        raise ValueError("time_cf_generate_fast requires a dataset for shapelet extraction and TimeGAN training.")
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    model.to(device)
+    model.eval()
+
+    sample_orig = sample.copy()
+    if sample.ndim == 1:
+        sample = sample.reshape(1, -1)
+    n_channels, seq_len = sample.shape
+    if max_shapelet_length is None:
+        max_shapelet_length = seq_len // 2
+
+    def predict_sample(ts):
+        if ts.ndim == 1:
+            ts = ts.reshape(1, -1)
+        ts_tensor = torch.tensor(ts, dtype=torch.float32, device=device)
+        if len(ts_tensor.shape) == 2:
+            ts_tensor = ts_tensor.unsqueeze(0)
+        with torch.no_grad():
+            pred = model(ts_tensor)
+            proba = torch.softmax(pred, dim=-1).squeeze().cpu().numpy()
+        return np.argmax(proba), proba
+
+    original_class, original_proba = predict_sample(sample)
+    if target_class is None:
+        target_class = int(np.argsort(original_proba)[::-1][1])
+    if original_class == target_class:
+        if verbose:
+            print("Time-CF (fast): Sample already in target class")
+        return None, None
+    if verbose:
+        print(f"Time-CF (fast): Original class={original_class} (p={original_proba[original_class]:.3f}), "
+              f"Target class={target_class} (p={original_proba[target_class]:.3f})")
+
+    # --- Shapelets: cached per dataset, independent of original_class ---
+    shapelet_key = id(dataset)
+    cached_shapelets = _TIME_CF_SHAPELET_CACHE.get(shapelet_key)
+    if cached_shapelets is None:
+        if verbose:
+            print("Time-CF (fast): Extracting shapelets (first call for this dataset, will be cached)...")
+        X_train, y_train = [], []
+        for i in range(min(len(dataset), 1000)):
+            try:
+                item = dataset[i]
+                ts, label = (item[0], item[1]) if isinstance(item, (tuple, list)) else (item, 0)
+                ts_np = np.array(ts)
+                if ts_np.ndim == 1:
+                    ts_np = ts_np.reshape(1, -1)
+                elif ts_np.ndim == 3:
+                    ts_np = ts_np.squeeze(0)
+                X_train.append(ts_np)
+                label_scalar = int(np.argmax(label)) if hasattr(label, 'shape') and len(label.shape) > 0 else int(label)
+                y_train.append(label_scalar)
+            except Exception:
+                continue
+        X_train = np.array(X_train)
+        y_train = np.array(y_train)
+        if X_train.ndim == 2:
+            X_train = X_train.reshape(X_train.shape[0], 1, X_train.shape[1])
+
+        shapelets = extract_random_shapelets(
+            X_train, y_train, n_shapelets=n_shapelets,
+            min_length=min_shapelet_length, max_length=max_shapelet_length,
+            n_candidates=n_shapelet_candidates
+        )
+        cached_shapelets = (X_train, y_train, shapelets)
+        _TIME_CF_SHAPELET_CACHE[shapelet_key] = cached_shapelets
+    X_train, y_train, shapelets = cached_shapelets
+
+    # --- TimeGAN + synthetic samples: cached per (dataset, original_class) ---
+    gan_key = (shapelet_key, int(original_class))
+    cached_gan = _TIME_CF_GAN_CACHE.get(gan_key)
+    if cached_gan is None:
+        other_class_mask = y_train != original_class
+        X_other = X_train[other_class_mask]
+        if len(X_other) < 10:
+            if verbose:
+                print("Time-CF (fast): Warning - Not enough samples from other classes, using all data")
+            X_other = X_train
+
+        if verbose:
+            print(f"Time-CF (fast): Training TimeGAN on {len(X_other)} instances from other classes "
+                  f"(first call for original_class={original_class}, will be cached)...")
+
+        timegan_result = train_timegan(
+            X_other, hidden_dim=timegan_hidden_dim, n_layers=timegan_n_layers,
+            n_epochs=timegan_epochs, batch_size=timegan_batch_size,
+            device=device, verbose=verbose
+        )
+        embedder, recovery, generator, supervisor, discriminator, (n_features, seq_len_gan) = timegan_result
+
+        synthetic_samples = generate_synthetic_samples(
+            generator, supervisor, recovery, n_features, seq_len_gan,
+            timegan_hidden_dim, n_samples=M, device=device
+        )
+        cached_gan = (synthetic_samples,)
+        _TIME_CF_GAN_CACHE[gan_key] = cached_gan
+    (synthetic_samples,) = cached_gan
+
+    # --- Steps 5-9: crop synthetic shapelets into this query, test, pick best (cheap, per-query) ---
+    counterfactual_candidates = []
+    for shapelet_info in shapelets:
+        start, min_dist = find_shapelet_position(shapelet_info, sample)
+        length = shapelet_info['length']
+        channel = shapelet_info.get('channel', 0)
+
+        for synth_sample in synthetic_samples:
+            fake_shapelet = crop_synthetic_shapelet(synth_sample, start, length, channel)
+            cf_candidate = sample.copy()
+            if start + length <= cf_candidate.shape[1]:
+                cf_candidate[channel, start:start + length] = fake_shapelet
+
+            cf_class, cf_proba = predict_sample(cf_candidate)
+            if cf_class == target_class:
+                hamming_dist = np.sum(np.abs(cf_candidate - sample) > 1e-6)
+                counterfactual_candidates.append({
+                    'cf': cf_candidate,
+                    'proba': cf_proba,
+                    'hamming': hamming_dist,
+                    'shapelet_info': shapelet_info
+                })
+                if verbose:
+                    print(f"  Found CF: Hamming distance={hamming_dist}, "
+                          f"target_prob={cf_proba[target_class]:.4f}")
+
+    if len(counterfactual_candidates) == 0:
+        if verbose:
+            print("Time-CF (fast): No valid counterfactual found")
+        return None, None
+
+    counterfactual_candidates.sort(key=lambda x: x['hamming'])
+    best_cf = counterfactual_candidates[0]
+
+    if verbose:
+        print(f"Time-CF (fast): Best counterfactual - Hamming distance: {best_cf['hamming']}, "
+              f"Target prob: {best_cf['proba'][target_class]:.4f}")
+
+    cf_result = best_cf['cf']
+    if sample_orig.ndim == 1:
+        cf_result = cf_result.squeeze()
+
+    return cf_result, best_cf['proba']
+
+
+def time_cf_explain(sample, model, target_class=None, dataset=None,
                    device=None, verbose=False, **kwargs):
     """
     Generate Time-CF explanation with detailed information
-    
+
     Args:
         sample: Time series to explain
-        dataset: Training dataset
         model: Classifier model
         target_class: Target class
+        dataset: Training dataset (required)
         device: Device to use
         verbose: Print details
         **kwargs: Additional arguments for time_cf_generate
-        
+
     Returns:
         Dictionary with counterfactual, prediction, and explanation details
     """
+    if dataset is None:
+        raise ValueError("time_cf_explain requires a dataset for shapelet extraction and TimeGAN training.")
     cf, cf_pred = time_cf_generate(
-        sample, dataset, model, target_class,
+        sample, model, target_class, dataset,
         device=device, verbose=verbose, **kwargs
     )
     

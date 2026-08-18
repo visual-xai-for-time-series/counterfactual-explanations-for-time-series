@@ -48,6 +48,7 @@ def native_guide_uni_cf(
     max_iter: int | None = None,
     sub_len: int = 1,
     max_samples: int | None = None,
+    use_abs_importance: bool = False,
     verbose: bool = False,
     *args,
     **kwargs,
@@ -95,6 +96,14 @@ def native_guide_uni_cf(
     sub_len:
         Initial window size in time steps.  The window grows by ``sub_len``
         each iteration until the model flips or ``max_iter`` is exhausted.
+    use_abs_importance:
+        When ``False`` (default), rank candidate windows by the *signed* sum
+        of the NUN's attribution — matching the original paper/repo, where
+        the (unrectified) CAM weight vector is summed directly, so the
+        window most positively supporting ``cf_label`` is copied first. When
+        ``True``, rank by attribution *magnitude* instead (``abs`` before
+        summing), which can select windows that argue against ``cf_label``
+        as readily as windows that argue for it.
     verbose:
         Print per-iteration diagnostics when ``True``.
 
@@ -160,33 +169,15 @@ def native_guide_uni_cf(
     candidates_labels = label_data[mask]     # (M,)
 
     # --- 4. Find the NUN via nearest-neighbour search ---
-    # We search over a pool of k neighbours to skip any exact duplicates of the
-    # query that happen to be misclassified, but in practice the first hit is
-    # almost always the true NUN.
-    k_pool = max(1, min(int(L * 0.25), len(candidates)))
-    neigh = NearestNeighbors(
-        n_neighbors=min(k_pool + 1, len(candidates)), metric="euclidean"
-    )
+    # `candidates` is already restricted to the desired label(s) (see the
+    # masking above), so the single nearest neighbour is the NUN.
+    neigh = NearestNeighbors(n_neighbors=1, metric="euclidean")
     neigh.fit(candidates.reshape(len(candidates), -1))
     _, idxs = neigh.kneighbors(sample_cl.reshape(1, -1), return_distance=True)
 
-    # Walk neighbours closest-first; pick the first one with the desired label.
-    # (When target_class is set every candidate already has the right label, so
-    # the loop always exits on the first iteration.)
-    native_guide = None
-    cf_label = None
-    desired_label = target_class  # None means "any label != label_sample"
-    for idx in idxs[0]:
-        cand_label = int(candidates_labels[idx])
-        if desired_label is None or cand_label == desired_label:
-            native_guide = candidates[idx]
-            cf_label = cand_label
-            break
-
-    if native_guide is None:
-        # Fallback: use the single closest candidate regardless of label
-        native_guide = candidates[0]
-        cf_label = int(candidates_labels[0])
+    nun_idx = int(idxs[0, 0])
+    native_guide = candidates[nun_idx]
+    cf_label = int(candidates_labels[nun_idx])
 
     if verbose:
         print(f"[NativeGuide] Query class: {label_sample} | NUN class: {cf_label}")
@@ -204,12 +195,19 @@ def native_guide_uni_cf(
         target=cf_label,
     )
     attr_np = detach_to_numpy(attributions)  # (1, C, L) or (C, L)
+    if attr_np.ndim == 3:
+        attr_np = attr_np[0]                              # (C, L)
 
     # Collapse channel dimension so importance is a 1-D vector over time steps.
-    if attr_np.ndim == 3:
-        importance = np.sum(np.abs(attr_np[0]), axis=0)  # (L,)
-    else:
+    # By default we sum the *signed* attribution (matching the original CAM
+    # weight vector, which is not rectified) so that the window search below
+    # favours regions that actually support `cf_label`. Setting
+    # `use_abs_importance=True` instead ranks windows by attribution
+    # *magnitude*, regardless of whether they support or oppose `cf_label`.
+    if use_abs_importance:
         importance = np.sum(np.abs(attr_np), axis=0)     # (L,)
+    else:
+        importance = np.sum(attr_np, axis=0)              # (L,)
 
     def find_most_influential_window(length: int) -> int:
         """Return the start index of the length-`length` window with the highest

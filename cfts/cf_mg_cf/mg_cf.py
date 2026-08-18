@@ -144,24 +144,24 @@ def extract_shapelets(X_train, y_train, n_shapelets=100, lengths_ratio=[0.3, 0.5
     return best_motifs
 
 
-def mg_cf_generate(sample, dataset, model, target_class=None,
+def mg_cf_generate(sample, model, target_class=None, dataset=None,
                   motifs=None, n_shapelets=100, lengths_ratio=[0.3, 0.5, 0.7],
                   device=None, verbose=False):
     """
     Generate counterfactual using MG-CF (Motif-Guided Counterfactual) method.
-    
+
     This implements Algorithm 2 (CF Generation) from the MG-CF paper.
     The algorithm:
     1. Extracts discriminative motifs from training data (if not provided)
     2. Identifies the target class motif
     3. Replaces the corresponding region in the query instance with target class motif
     4. Verifies if the counterfactual flips the prediction
-    
+
     Args:
         sample: Time series instance to explain (length,) or (channels, length)
-        dataset: Training dataset for motif extraction (list of tuples (x, y))
         model: Trained classifier model
         target_class: Target class for counterfactual (optional)
+        dataset: Training dataset for motif extraction (list of tuples (x, y)), required
         motifs: Pre-extracted motifs (optional, will extract if None)
         n_shapelets: Number of shapelet candidates to extract
         lengths_ratio: Ratios for shapelet lengths
@@ -171,12 +171,14 @@ def mg_cf_generate(sample, dataset, model, target_class=None,
     Returns:
         Tuple of (counterfactual, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("mg_cf_generate requires a dataset for motif extraction.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+
     model.to(device)
     model.eval()
-    
+
     # Prepare sample
     sample_orig = sample.copy()
     if sample.ndim == 1:
@@ -307,26 +309,28 @@ def mg_cf_generate(sample, dataset, model, target_class=None,
     return cf_sample, cf_proba
 
 
-def mg_cf_explain(sample, dataset, model, target_class=None,
+def mg_cf_explain(sample, model, target_class=None, dataset=None,
                  motifs=None, device=None, verbose=False, **kwargs):
     """
     Generate MG-CF explanation with detailed information.
-    
+
     Args:
         sample: Time series to explain
-        dataset: Training dataset
         model: Classifier model
         target_class: Target class
+        dataset: Training dataset (required)
         motifs: Pre-extracted motifs
         device: Device to use
         verbose: Print details
         **kwargs: Additional arguments for mg_cf_generate
-        
+
     Returns:
         Dictionary with counterfactual, prediction, and explanation details
     """
+    if dataset is None:
+        raise ValueError("mg_cf_explain requires a dataset for motif extraction.")
     cf, cf_pred = mg_cf_generate(
-        sample, dataset, model, target_class,
+        sample, model, target_class, dataset,
         motifs=motifs, device=device, verbose=verbose, **kwargs
     )
     
@@ -416,7 +420,7 @@ def mg_cf_batch(samples, dataset, model, target_class=None,
             print(f"MG-CF Batch: Processing sample {i}/{len(samples)}")
         
         cf, pred = mg_cf_generate(
-            sample, dataset, model, target_class,
+            sample, model, target_class, dataset,
             motifs=motifs, device=device, verbose=False
         )
         

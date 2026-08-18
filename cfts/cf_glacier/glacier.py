@@ -107,20 +107,20 @@ def _revert_orientation(cf_arr, orientation):
     return _simple_revert(cf_arr, orientation)
 
 
-def glacier_cf(sample, dataset, model, target_class=None, lambda_sparse=0.1, lambda_proximity=1.0,
+def glacier_cf(sample, model, target_class=None, dataset=None, lambda_sparse=0.1, lambda_proximity=1.0,
                lambda_diversity=0.1, max_iterations=1000, learning_rate=0.01, tolerance=1e-6,
                initialization_method='closest_different', verbose=False):
     """
     GLACIER: Gradient-based Learning of Approximate Counterfactual Explanations for Recurrent neural networks
-    
+
     Generates counterfactual explanations by optimizing a multi-objective loss function using gradients.
     The method aims to find minimal perturbations to the input time series that change the model's prediction.
-    
+
     Args:
         sample: Input time series sample to explain
-        dataset: Training dataset for finding initialization and reference points
         model: Trained PyTorch model
         target_class: Desired target class for counterfactual (if None, finds closest different class)
+        dataset: Training dataset for finding initialization and reference points (required)
         lambda_sparse: Weight for sparsity regularization (promotes minimal changes)
         lambda_proximity: Weight for proximity constraint (keeps CF close to original)
         lambda_diversity: Weight for diversity constraint (ensures CF is different from original)
@@ -128,11 +128,13 @@ def glacier_cf(sample, dataset, model, target_class=None, lambda_sparse=0.1, lam
         learning_rate: Learning rate for gradient descent
         tolerance: Convergence tolerance
         initialization_method: Method for initializing the counterfactual ('closest_different', 'random', 'original')
-    
+
     Returns:
         counterfactual: Generated counterfactual in same orientation as input
         cf_prediction: Model prediction for the counterfactual
     """
+    if dataset is None:
+        raise ValueError("glacier_cf requires a dataset for initialization and reference points.")
     device = next(model.parameters()).device
     
     def model_predict(arr):
@@ -253,31 +255,33 @@ def glacier_cf(sample, dataset, model, target_class=None, lambda_sparse=0.1, lam
     return cf_out, cf_prediction
 
 
-def glacier_cf_multi_objective(sample, dataset, model, target_class=None, lambda_sparse=0.1, 
+def glacier_cf_multi_objective(sample, model, target_class=None, dataset=None, lambda_sparse=0.1,
                               lambda_proximity=1.0, lambda_plausibility=0.5, max_iterations=1000,
                               learning_rate=0.01, tolerance=1e-6):
     """
     Enhanced GLACIER with plausibility constraint.
-    
+
     This version includes an additional plausibility constraint that encourages the counterfactual
     to be similar to real samples from the target class distribution.
-    
+
     Args:
         sample: Input time series sample to explain
-        dataset: Training dataset for finding reference points
         model: Trained PyTorch model
         target_class: Desired target class for counterfactual
+        dataset: Training dataset for finding reference points (required)
         lambda_sparse: Weight for sparsity regularization
         lambda_proximity: Weight for proximity constraint
         lambda_plausibility: Weight for plausibility constraint
         max_iterations: Maximum number of optimization iterations
         learning_rate: Learning rate for gradient descent
         tolerance: Convergence tolerance
-    
+
     Returns:
         counterfactual: Generated counterfactual in same orientation as input
         cf_prediction: Model prediction for the counterfactual
     """
+    if dataset is None:
+        raise ValueError("glacier_cf_multi_objective requires a dataset for reference points.")
     device = next(model.parameters()).device
     
     def model_predict(arr):

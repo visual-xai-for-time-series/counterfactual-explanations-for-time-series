@@ -147,7 +147,7 @@ class PolicyNetwork(nn.Module):
 
 def cfwot(sample,
           model,
-          target=None,
+          target_class=None,
           D_act=None,
           D_non_act=None,
           D_immu=None,
@@ -170,7 +170,7 @@ def cfwot(sample,
     Args:
         sample: Original input sample, shape (K, D) for time series or (D,) for static
         model: Predictive model (callable that takes input and returns predictions)
-        target: Target class for counterfactual (int)
+        target_class: Target class for counterfactual (int)
         D_act: List of actionable feature indices (default: all features)
         D_non_act: List of non-actionable feature indices
         D_immu: List of immutable feature indices
@@ -256,17 +256,17 @@ def cfwot(sample,
             pred = model(x_tensor)
         return detach_to_numpy(pred)[0]
     
-    # Get initial prediction and determine target if not specified
+    # Get initial prediction and determine target_class if not specified
     y_orig = model_predict(sample)
     label_orig = int(np.argmax(y_orig))
     
-    if target is None:
-        # Choose second most likely class as target
+    if target_class is None:
+        # Choose second most likely class as target_class
         sorted_indices = np.argsort(y_orig)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
     if verbose:
-        print(f"CFWoT: Original class {label_orig}, Target class {target}")
+        print(f"CFWoT: Original class {label_orig}, Target class {target_class}")
         print(f"CFWoT: K={K}, D={D}, D_C={D_C}, D_D={D_D}")
     
     # Initialize policy network
@@ -338,12 +338,12 @@ def cfwot(sample,
         """
         Reward function combining prediction and proximity.
         
-        r = 1 - lambda_pxmt * D_pxmt  if f(x) == target
+        r = 1 - lambda_pxmt * D_pxmt  if f(x) == target_class
         r = 0                          otherwise
         """
         pred_class = int(np.argmax(y_pred))
         
-        if pred_class == target:
+        if pred_class == target_class:
             prox = compute_proximity(sample, x)
             reward = 1.0 - lambda_pxmt * prox
             return reward, True  # Valid CF

@@ -171,6 +171,52 @@ def compute_shapelet_distance(ts, shapelet):
     return min_dist
 
 
+def compute_shapelet_distance_fast(ts, shapelet):
+    """
+    Vectorized, numerically-equivalent replacement for compute_shapelet_distance().
+
+    The original computes the same z-normalised sliding-window Euclidean
+    distance for every window position in a Python for-loop; sg_cf()'s main
+    optimization loop calls it up to
+    ``max_lambda_steps * max_iter * min(len(target_shapelets), 5)`` times, so
+    that loop (o(series_length) tiny autograd ops per call) dominates runtime
+    — see cf_sg_cf/sg_cf_forda_comparison.ipynb for the measured effect. This
+    version computes all window distances at once via ``Tensor.unfold`` and
+    stays fully differentiable w.r.t. ``ts``, so it's a drop-in replacement
+    (pass as ``distance_fn=`` to sg_cf(), or use sg_cf_fast()).
+
+    Returns:
+        Same scalar tensor compute_shapelet_distance() would return (the
+        minimum z-normalised distance across all window positions).
+    """
+    if isinstance(shapelet, np.ndarray):
+        shapelet = torch.tensor(shapelet, dtype=torch.float32, device=ts.device)
+
+    ts_1d = ts if ts.dim() == 1 else ts.flatten()
+    shapelet_len = len(shapelet)
+
+    if len(ts_1d) < shapelet_len:
+        return torch.norm(ts_1d - shapelet[:len(ts_1d)])
+
+    # All sliding windows at once: (n_windows, shapelet_len)
+    windows = ts_1d.unfold(0, shapelet_len, 1)
+
+    win_mean = windows.mean(dim=1, keepdim=True)
+    win_std = windows.std(dim=1, keepdim=True)
+    # Match the original's "treat std==0 as no-op normalisation" fallback
+    # without ever dividing by zero (which would poison gradients even
+    # through the discarded branch of a plain torch.where).
+    win_std_safe = torch.where(win_std > 0, win_std, torch.ones_like(win_std))
+    windows_norm = (windows - win_mean) / win_std_safe
+
+    shap_mean = shapelet.mean()
+    shap_std = shapelet.std()
+    shapelet_norm = (shapelet - shap_mean) / shap_std if shap_std.item() > 0 else shapelet - shap_mean
+
+    dists = torch.norm(windows_norm - shapelet_norm.unsqueeze(0), dim=1)
+    return dists.min()
+
+
 def find_prominent_segment(gradient, seg_len):
     """
     Find the segment with maximum gradient magnitude (most important for change).
@@ -199,27 +245,29 @@ def find_prominent_segment(gradient, seg_len):
     return idx_start, idx_end
 
 
-def sg_cf(sample, dataset, model, target_class=None,
+def sg_cf(sample, model, target_class=None, dataset=None,
           prototype=None, shapelets=None,
           max_iter=1000, max_lambda_steps=10,
           lambda_init=0.1, learning_rate=0.1,
           segment_rate_init=0.05, segment_rate_max=0.7, segment_rate_step=0.01,
           target_proba=0.95, distance='l1', early_stop=50,
+          distance_fn=None,
           device=None, verbose=False):
     """
     Generate counterfactual using SG-CF (Shapelet-Guided Counterfactual) method.
-    
+
     This implements the SG-CF algorithm from Li et al. (2022) which combines:
     - Wachter-style optimization with distance and prediction loss
     - Shapelet-based guidance to focus modifications
     - Gradient masking within shapelet regions
     - Progressive segment expansion strategy
-    
+
     Args:
         sample: Time series instance to explain (numpy array)
-        dataset: Training dataset for shapelet extraction
         model: Trained classifier model
         target_class: Target class for counterfactual (optional)
+        dataset: Training dataset for shapelet extraction. Required unless
+            pre-extracted `shapelets` are passed in.
         prototype: Prototype time series from target class (optional)
         shapelets: Pre-extracted shapelets (optional)
         max_iter: Maximum iterations per lambda step
@@ -232,23 +280,32 @@ def sg_cf(sample, dataset, model, target_class=None,
         target_proba: Target probability threshold
         distance: Distance metric ('l1' or 'l2')
         early_stop: Early stopping threshold
+        distance_fn: Shapelet-distance function to use, signature
+            ``(ts_tensor, shapelet) -> scalar tensor``. Defaults to
+            compute_shapelet_distance(); pass compute_shapelet_distance_fast()
+            (or use sg_cf_fast()) for a vectorized, much faster equivalent —
+            this is the dominant cost in the main optimization loop.
         device: Device to run on
         verbose: Print progress information
-        
+
     Returns:
         Tuple of (counterfactual, prediction) or (None, None) if failed
     """
+    if dataset is None and shapelets is None:
+        raise ValueError("sg_cf requires either a dataset (to extract shapelets) or pre-extracted shapelets.")
+    if distance_fn is None:
+        distance_fn = compute_shapelet_distance
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+
     model.to(device)
     model.eval()
-    
+
     # Prepare sample
     sample_orig = sample.copy()
     if sample.ndim == 1:
         sample = sample.reshape(1, -1)
-    
+
     sample_tensor = torch.tensor(sample, dtype=torch.float32, device=device)
     if len(sample_tensor.shape) == 2:
         sample_tensor = sample_tensor.unsqueeze(0)
@@ -352,7 +409,7 @@ def sg_cf(sample, dataset, model, target_class=None,
             if len(target_shapelets) > 0:
                 shapelet_dists = []
                 for shap, _, _ in target_shapelets[:3]:  # Use top 3 shapelets
-                    shapelet_dists.append(compute_shapelet_distance(cf_tensor.squeeze(), shap))
+                    shapelet_dists.append(distance_fn(cf_tensor.squeeze(), shap))
                 loss_shapelet = torch.mean(torch.stack(shapelet_dists))
             
             # Prediction loss
@@ -421,7 +478,7 @@ def sg_cf(sample, dataset, model, target_class=None,
                 if len(target_shapelets) > 0:
                     shapelet_dists = []
                     for shap, _, _ in target_shapelets[:5]:
-                        shapelet_dists.append(compute_shapelet_distance(cf_tensor.squeeze(), shap))
+                        shapelet_dists.append(distance_fn(cf_tensor.squeeze(), shap))
                     loss_shapelet = torch.mean(torch.stack(shapelet_dists))
                 
                 # Prediction loss
@@ -532,23 +589,131 @@ def sg_cf(sample, dataset, model, target_class=None,
     return cf_result, best_pred
 
 
-def sg_cf_explain(sample, dataset, model, target_class=None,
+# Cache of (shapelets, X_train, y_train) keyed by id(dataset), so repeated
+# sg_cf_fast() calls against the same dataset only pay the shapelet
+# extraction cost once. Keyed by identity (not contents) — safe within a
+# single process/benchmark run, not across processes.
+_SG_CF_SHAPELET_CACHE = {}
+
+
+def sg_cf_fast(sample, model, target_class=None, dataset=None,
+               prototype=None, shapelets=None,
+               max_iter=1000, max_lambda_steps=10,
+               lambda_init=0.1, learning_rate=0.1,
+               segment_rate_init=0.05, segment_rate_max=0.7, segment_rate_step=0.01,
+               target_proba=0.95, distance='l1', early_stop=50,
+               device=None, verbose=False):
+    """
+    Faster, result-equivalent version of sg_cf().
+
+    Two independent speedups, both preserving sg_cf()'s algorithm exactly:
+      1. Shapelet extraction (and the target-class prototype search) is
+         cached per dataset, so evaluating multiple query instances against
+         the same training set only extracts shapelets once instead of on
+         every call.
+      2. The shapelet-distance function used inside the optimization loop
+         is compute_shapelet_distance_fast() (vectorized sliding window)
+         instead of compute_shapelet_distance() (Python loop) — this is the
+         dominant cost, since it's called
+         ``max_lambda_steps * max_iter * min(n_shapelets, 5)`` times.
+
+    Args/Returns: identical to sg_cf() (this simply forwards to it with
+    ``distance_fn=compute_shapelet_distance_fast`` and cached shapelets).
+    """
+    if dataset is None and shapelets is None:
+        raise ValueError("sg_cf_fast requires either a dataset (to extract shapelets) or pre-extracted shapelets.")
+
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Resolve target_class ourselves (mirroring sg_cf()'s own fallback: second
+    # most likely class) whenever the caller didn't pass one. sg_cf() needs a
+    # concrete target_class to look up target_shapelets/prototype, and — once
+    # we hand it pre-extracted `shapelets` — it can no longer fall back to its
+    # own (dataset-driven) prototype search, so we must resolve this before
+    # computing `prototype` below rather than leave it to sg_cf() internally.
+    if target_class is None:
+        sample_tensor = torch.tensor(sample, dtype=torch.float32, device=device)
+        if sample_tensor.dim() == 1:
+            sample_tensor = sample_tensor.unsqueeze(0).unsqueeze(0)
+        elif sample_tensor.dim() == 2:
+            sample_tensor = sample_tensor.unsqueeze(0)
+        with torch.no_grad():
+            original_pred = model.to(device)(sample_tensor)
+        target_class = int(torch.argsort(original_pred, descending=True).squeeze()[1].item())
+
+    if shapelets is None:
+        cache_key = id(dataset)
+        cached = _SG_CF_SHAPELET_CACHE.get(cache_key)
+        if cached is None:
+            if verbose:
+                print("SG-CF (fast): Extracting shapelets from training data (first call, will be cached)...")
+            X_train, y_train = [], []
+            for i in range(min(len(dataset), 500)):
+                item = dataset[i]
+                ts, label = (item[0], item[1]) if isinstance(item, (tuple, list)) else (item, 0)
+                ts_np = np.array(ts)
+                if ts_np.ndim == 1:
+                    ts_np = ts_np.reshape(1, -1)
+                elif ts_np.ndim == 3:
+                    ts_np = ts_np.squeeze(0)
+                X_train.append(ts_np)
+                label_scalar = int(np.argmax(label)) if hasattr(label, 'shape') and len(label.shape) > 0 else int(label)
+                y_train.append(label_scalar)
+            X_train = np.array(X_train)
+            y_train = np.array(y_train)
+            shapelets = extract_shapelets_simple(X_train, y_train, n_shapelets_per_class=10)
+            cached = (shapelets, X_train, y_train)
+            _SG_CF_SHAPELET_CACHE[cache_key] = cached
+        shapelets, X_train, y_train = cached
+
+        # sg_cf() only needs `dataset` to build X_train/y_train for prototype
+        # search when `prototype` is None; since we already have them cached,
+        # compute the prototype here too so we can call sg_cf() with
+        # dataset=None (skipping its own, uncached extraction pass). A
+        # prototype is required in that case — sg_cf() has no X_train/y_train
+        # of its own to fall back on once pre-extracted shapelets are passed
+        # in — so always land on *some* array, matching sg_cf()'s own
+        # `prototype = sample.copy()` fallback when no target samples exist.
+        if prototype is None:
+            target_samples = X_train[y_train == target_class]
+            if len(target_samples) > 0:
+                sample_arr = sample.reshape(1, -1) if np.asarray(sample).ndim == 1 else sample
+                distances = [np.linalg.norm(sample_arr - ts) for ts in target_samples]
+                prototype = target_samples[np.argmin(distances)]
+            else:
+                prototype = sample.copy()
+
+    return sg_cf(
+        sample, model, target_class=target_class, dataset=None,
+        prototype=prototype, shapelets=shapelets,
+        max_iter=max_iter, max_lambda_steps=max_lambda_steps,
+        lambda_init=lambda_init, learning_rate=learning_rate,
+        segment_rate_init=segment_rate_init, segment_rate_max=segment_rate_max,
+        segment_rate_step=segment_rate_step,
+        target_proba=target_proba, distance=distance, early_stop=early_stop,
+        distance_fn=compute_shapelet_distance_fast,
+        device=device, verbose=verbose,
+    )
+
+
+def sg_cf_explain(sample, model, target_class=None, dataset=None,
                  max_iter=1000, max_lambda_steps=10,
                  lambda_init=0.1, learning_rate=0.1,
                  device=None, verbose=False):
     """
     Generate SG-CF explanation with detailed information.
-    
+
     Returns both counterfactual and explanation details including:
     - Shapelets used for guidance
     - Shapelet regions modified
     - Distance and validity metrics
-    
+
     Args:
         sample: Time series to explain
-        dataset: Training dataset
         model: Classifier model
         target_class: Target class
+        dataset: Training dataset (required)
         max_iter: Maximum iterations
         max_lambda_steps: Maximum lambda steps
         lambda_init: Initial lambda
@@ -559,6 +724,8 @@ def sg_cf_explain(sample, dataset, model, target_class=None,
     Returns:
         Dictionary with counterfactual, prediction, and explanation details
     """
+    if dataset is None:
+        raise ValueError("sg_cf_explain requires a dataset to extract shapelets from.")
     # Extract shapelets
     X_train, y_train = [], []
     for i in range(min(len(dataset), 500)):
@@ -594,7 +761,7 @@ def sg_cf_explain(sample, dataset, model, target_class=None,
     
     # Generate counterfactual
     cf, cf_pred = sg_cf(
-        sample, dataset, model, target_class,
+        sample, model, target_class, dataset,
         shapelets=shapelets,
         max_iter=max_iter, max_lambda_steps=max_lambda_steps,
         lambda_init=lambda_init, learning_rate=learning_rate,

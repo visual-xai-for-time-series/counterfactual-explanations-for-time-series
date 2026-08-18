@@ -13,6 +13,7 @@ interpretable counterfactuals, particularly designed for multivariate time serie
 """
 
 import torch
+import torch.nn as nn
 import numpy as np
 import copy
 from abc import ABC, abstractmethod
@@ -76,7 +77,116 @@ class OutlierCalculator:
         return normalized_scores
 
 
-def fitness_function_final(ms, predicted_probs, desired_class, outlier_scores,
+class _ConvAutoencoder1D(nn.Module):
+    """Small conv1d encoder/decoder used by AutoencoderOutlierCalculator to score plausibility
+    via reconstruction error -- the real autoencoder-based approach the module docstring of
+    OutlierCalculator above refers to as "a full implementation"."""
+
+    def __init__(self, channels, latent_channels=16):
+        super().__init__()
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Conv1d(channels, 16, kernel_size=5, stride=2, padding=2),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Conv1d(16, latent_channels, kernel_size=5, stride=2, padding=2),
+            torch.nn.ReLU(inplace=True),
+        )
+        self.decoder = torch.nn.Sequential(
+            torch.nn.ConvTranspose1d(latent_channels, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.ConvTranspose1d(16, channels, kernel_size=5, stride=2, padding=2, output_padding=1),
+        )
+
+    def forward(self, x):
+        out = self.decoder(self.encoder(x))
+        if out.shape[-1] != x.shape[-1]:
+            out = torch.nn.functional.interpolate(out, size=x.shape[-1], mode="linear", align_corners=False)
+        return out
+
+
+def train_outlier_autoencoder(calibration_data, device, epochs=30, batch_size=64, lr=1e-3):
+    """Train a small conv1d autoencoder for AutoencoderOutlierCalculator.
+
+    Args:
+        calibration_data: In-distribution reference samples, shape (N, L, C).
+        device: Torch device to train on.
+
+    Returns:
+        Trained autoencoder (nn.Module).
+    """
+    calibration_data = np.asarray(calibration_data, dtype=np.float32)
+    n_samples = calibration_data.shape[0]
+    channels = calibration_data.shape[2]
+    autoencoder = _ConvAutoencoder1D(channels).to(device)
+    optimizer = torch.optim.Adam(autoencoder.parameters(), lr=lr)
+    data_cl = numpy_to_torch(np.transpose(calibration_data, (0, 2, 1)), device)  # (N, L, C) -> (N, C, L)
+
+    autoencoder.train()
+    for _ in range(epochs):
+        perm = torch.randperm(n_samples, device=device)
+        for start in range(0, n_samples, batch_size):
+            batch = data_cl[perm[start:start + batch_size]]
+            optimizer.zero_grad()
+            loss = torch.mean((autoencoder(batch) - batch) ** 2)
+            loss.backward()
+            optimizer.step()
+    autoencoder.eval()
+    return autoencoder
+
+
+class AutoencoderOutlierCalculator:
+    """Reconstruction-error-based outlier calculator matching the official Sub-SpaCE
+    repository's AEOutlierCalculator (methods/outlier_calculators.py): a [0, 1]-scaled outlier
+    score computed from a real trained autoencoder's mean absolute reconstruction error,
+    calibrated against in-distribution reference data -- as opposed to OutlierCalculator's
+    simplified per-feature z-score deviation above.
+    """
+
+    def __init__(self, autoencoder, calibration_data, device):
+        """
+        Args:
+            autoencoder: Trained autoencoder (e.g. from train_outlier_autoencoder), operating
+                on (N, C, L) channel-first input/output.
+            calibration_data: In-distribution reference samples, shape (N, L, C), used to
+                calibrate the max reconstruction error for scaling.
+            device: Torch device the autoencoder lives on.
+        """
+        self.autoencoder = autoencoder
+        self.device = device
+        self.length = calibration_data.shape[1]
+        self.n_channels = calibration_data.shape[2]
+
+        calibration_errors = self._get_reconstruction_errors(calibration_data)
+        self.min_error = 0.0
+        self.max_error = float(calibration_errors.max()) + 1e-8
+
+    def _get_reconstruction_errors(self, data):
+        data = np.asarray(data, dtype=np.float32).reshape(-1, self.length, self.n_channels)
+        x_lc = numpy_to_torch(data, self.device)
+        x_cl = x_lc.permute(0, 2, 1)  # (N, L, C) -> (N, C, L)
+        with torch.no_grad():
+            recon_cl = self.autoencoder(x_cl)
+        recon_lc = recon_cl.permute(0, 2, 1)
+        errors = torch.mean(torch.abs(x_lc - recon_lc), dim=(1, 2))
+        return detach_to_numpy(errors)
+
+    def get_outlier_scores(self, data):
+        """Calculate outlier scores based on autoencoder reconstruction error.
+
+        Args:
+            data: Input data - either (L, C) for single sample or (N, L, C) for batch
+
+        Returns:
+            scores: Outlier scores of shape (N,) or scalar for single sample
+        """
+        original_was_2d = np.asarray(data).ndim == 2
+        errors = self._get_reconstruction_errors(data)
+        scaled_scores = (errors - self.min_error) / (self.max_error - self.min_error)
+        if original_was_2d:
+            return float(scaled_scores.flat[0])
+        return scaled_scores
+
+
+def fitness_function_final(ms, predicted_probs, target_class, outlier_scores,
                            invalid_penalization, alpha, beta, eta, gamma, sparsity_balancer):
     """
     Fitness function for evaluating counterfactual candidates.
@@ -84,7 +194,7 @@ def fitness_function_final(ms, predicted_probs, desired_class, outlier_scores,
     Args:
         ms: Binary masks indicating which subsequences to replace
         predicted_probs: Predicted class probabilities
-        desired_class: Target class for counterfactuals
+        target_class: Target class for counterfactuals
         outlier_scores: Outlier scores for each candidate
         invalid_penalization: Penalty for invalid counterfactuals
         alpha: Weight for classification probability
@@ -105,9 +215,9 @@ def fitness_function_final(ms, predicted_probs, desired_class, outlier_scores,
     sparsity_term = sparsity_balancer * ones_pct + (1 - sparsity_balancer) * subsequences_pct ** gamma  # (pop_size,)
 
     # Penalization for not prob satisfied
-    desired_class_probs = predicted_probs[:, desired_class]
+    desired_class_probs = predicted_probs[:, target_class]
     predicted_classes = np.argmax(predicted_probs, axis=1)
-    penalization = (predicted_classes != desired_class).astype(int)
+    penalization = (predicted_classes != target_class).astype(int)
 
     # Clip outlier scores
     if outlier_scores is not None:
@@ -161,10 +271,10 @@ class EvolutionaryOptimizer(ABC):
     def init_population(self, importance_heatmap=None):
         pass
 
-    def init(self, x_orig, nun_example, desired_class, outlier_calculator=None, importance_heatmap=None):
+    def init(self, x_orig, nun_example, target_class, outlier_calculator=None, importance_heatmap=None):
         self.x_orig = x_orig
         self.nun_example = nun_example
-        self.desired_class = desired_class
+        self.target_class = target_class
         self.outlier_calculator = outlier_calculator
         self.importance_heatmap = importance_heatmap
         self.init_pct = copy.deepcopy(self.original_init_pct)
@@ -278,7 +388,7 @@ class EvolutionaryOptimizer(ABC):
 
         # Get fitness function
         fitness, desired_class_probs = self.fitness_func(
-            self.population, predicted_probs, self.desired_class, increase_outlier_score,
+            self.population, predicted_probs, self.target_class, increase_outlier_score,
             self.invalid_penalization, self.alpha, self.beta, self.eta,
             self.gamma, self.sparsity_balancer)
         return fitness, desired_class_probs
@@ -497,6 +607,109 @@ class NSubsequenceEvolutionaryOptimizer(EvolutionaryOptimizer):
         return mutated_sub_population
 
 
+class OriginalNSubsequenceEvolutionaryOptimizer(NSubsequenceEvolutionaryOptimizer):
+    """Same population/mutation mechanics as NSubsequenceEvolutionaryOptimizer above (inherited
+    unchanged), but with an optimize() loop matching the official MarioRefoyo/Sub-SpaCE
+    repository's EvolutionaryOptimizer.optimize() exactly, rather than this module's adapted
+    version. Two behavioral differences from the parent class:
+
+    1. No early stop once a valid counterfactual is found: the parent class's optimize() breaks
+       as soon as best_classification_prob > 0.5, returning the *first* valid solution. The
+       official loop only stops on population convergence (all fitness values equal) or
+       max_iter, so it keeps refining sparsity/plausibility after validity is first reached.
+    2. Reinit growth is uncapped: the parent class caps init_pct at 0.9 (min(0.9, ...)) as a
+       safety margin. The official code has no such cap -- init_pct grows by +0.2 each restart,
+       guarded only by `init_pct < 1` before the "stuck for 50 iterations" restart, and
+       unconditionally (regardless of the `reinit` flag) on a low-probability convergence
+       restart. init_population()'s own np.clip on init_pct still protects against an
+       out-of-range quantile if this ever pushes init_pct above 1.
+    """
+
+    def optimize(self):
+        # Keep track of the best solution
+        best_score = -100
+        best_sample = None
+        best_classification_prob = 0
+        fitness_evolution = []
+        cf_evolution = []
+
+        # Compute initial fitness
+        fitness, _ = self.compute_fitness()
+        i = np.argsort(fitness)[-1]
+        fitness_evolution.append(fitness[i])
+        best_cf = self.get_counterfactuals(self.x_orig, self.nun_example, np.expand_dims(self.population[i], axis=0))
+        cf_evolution.append(np.squeeze(best_cf, axis=0))
+
+        # Run evolution
+        iteration = 0
+        while iteration < self.max_iter:
+            # Init new population
+            new_population = np.empty(self.population.shape)
+
+            # Elites: Select elites and add to new population
+            elites_idx = np.argsort(fitness)[-self.elite_number:]
+            new_population[:self.elite_number, :] = self.population[elites_idx]
+
+            # Cross-over and mutation
+            # Select parents
+            candidate_population = self.select_candidates(self.population, fitness, self.offsprings_number)
+            # Produce offsprings
+            offsprings = self.produce_offsprings(candidate_population, self.offsprings_number)
+            # Add to the population
+            new_population[self.elite_number:self.offsprings_number + self.elite_number] = offsprings
+
+            # The rest of the population is random selected
+            random_indexes = np.random.randint(self.population_size, size=self.rest_number)
+            if self.rest_number > 0:
+                new_population[-self.rest_number:] = self.population[random_indexes]
+
+            # Change population
+            self.population = new_population.astype(int)
+
+            # Keep track of the best solution
+            fitness, class_probs = self.compute_fitness()
+            i = np.argsort(fitness)[-1]
+            fitness_evolution.append(fitness[i])
+            best_cf = self.get_counterfactuals(self.x_orig, self.nun_example, np.expand_dims(self.population[i], axis=0))
+            cf_evolution.append(np.squeeze(best_cf, axis=0))
+
+            if fitness[i] > best_score:
+                best_score = fitness[i]
+                best_sample = self.population[i]
+                best_classification_prob = class_probs[i]
+
+            # Handle while loop updates (uncapped init_pct growth, matching the official repo)
+            if self.reinit and (iteration == 50) and (self.init_pct < 1) and (fitness[i] < -self.invalid_penalization + 1):
+                if self.verbose:
+                    print('Failed to find a valid counterfactual in 50 iterations. '
+                          'Restarting process with more activations in init')
+                iteration = 0
+                self.init_pct = self.init_pct + 0.2
+                self.init_population(self.importance_heatmap)
+                fitness, class_probs = self.compute_fitness()
+            else:
+                iteration += 1
+
+            # Reinit if all fitness are equal (unconditional on self.reinit, matching the
+            # official repo -- unlike the "stuck for 50 iterations" branch above)
+            if np.all(fitness == fitness[0]):
+                if self.verbose:
+                    print(f'Found convergence of solutions in {iteration} iteration. Final prob {best_classification_prob}')
+                if best_classification_prob > 0.5:
+                    break
+                else:
+                    iteration = 0
+                    self.init_pct = self.init_pct + 0.2
+                    self.init_population(self.importance_heatmap)
+                    fitness, class_probs = self.compute_fitness()
+
+            # NOTE: unlike NSubsequenceEvolutionaryOptimizer.optimize(), there is no
+            # early-stop-on-first-valid-counterfactual check here -- the loop only exits via
+            # convergence (above) or max_iter, matching the official repo exactly.
+
+        return best_sample, best_classification_prob, fitness_evolution, cf_evolution
+
+
 def calculate_heatmap_torch(model, x_orig, device):
     """
     Calculate importance heatmap using gradients (simplified Grad-CAM approach).
@@ -535,22 +748,166 @@ def calculate_heatmap_torch(model, x_orig, device):
     return heatmap
 
 
-def subspace_cf(sample, dataset, model, nun_example=None, desired_class=None,
-                            population_size=100, elite_number=4, offsprings_number=96, 
-                            max_iter=100, change_subseq_mutation_prob=0.05, 
+def _prepare_subspace_call(sample, dataset, model, nun_example, target_class, verbose):
+    """Shared setup for subspace_cf / subspace_fast: normalize the input sample, find (or
+    normalize a provided) NUN, infer the desired class if needed, and compute the combined
+    importance heatmap. Returns everything the optimizer construction step needs."""
+    device = next(model.parameters()).device
+
+    def model_predict(arr):
+        # arr expected shape (B, C, L) - PyTorch convention
+        return detach_to_numpy(model(numpy_to_torch(arr, device)))
+
+    # Normalize sample to (L, C) format for internal processing
+    sample = np.asarray(sample)
+    if sample.ndim == 1:
+        sample = sample.reshape(-1, 1)  # (L, 1)
+    elif sample.ndim == 2:
+        # Assume (L, C) if L > C, else (C, L)
+        if sample.shape[0] < sample.shape[1]:
+            sample = sample.T
+
+    L, C = sample.shape
+
+    # Get predictions for sample (convert to B, C, L for model)
+    preds_sample = model_predict(sample.T.reshape(1, C, L))
+    label_sample = int(np.argmax(preds_sample))
+
+    # Find or use provided NUN
+    if nun_example is None:
+        # Find native guide: nearest neighbor from target class
+        if verbose:
+            print("Finding native guide (NUN) from dataset...")
+
+        # Get target class
+        if target_class is None:
+            # Find most common other class in dataset
+            dataset_labels = []
+            for item in dataset:
+                data = item[0] if isinstance(item, tuple) else item
+                data_arr = np.asarray(data)
+                if data_arr.ndim == 1:
+                    data_arr = data_arr.reshape(-1, 1)
+                elif data_arr.ndim == 2 and data_arr.shape[0] < data_arr.shape[1]:
+                    data_arr = data_arr.T
+                pred = model_predict(data_arr.T.reshape(1, C, L))
+                dataset_labels.append(int(np.argmax(pred)))
+
+            # Find most common class that's different from sample
+            from collections import Counter
+            class_counts = Counter(dataset_labels)
+            if label_sample in class_counts:
+                del class_counts[label_sample]
+            target_class_temp = class_counts.most_common(1)[0][0] if class_counts else 1 - label_sample
+        else:
+            target_class_temp = target_class
+
+        # Find nearest neighbor from target class
+        best_distance = float('inf')
+        best_nun = None
+        for item in dataset:
+            data = item[0] if isinstance(item, tuple) else item
+            data_arr = np.asarray(data)
+            if data_arr.ndim == 1:
+                data_arr = data_arr.reshape(-1, 1)
+            elif data_arr.ndim == 2 and data_arr.shape[0] < data_arr.shape[1]:
+                data_arr = data_arr.T
+
+            # Check if it's target class
+            pred = model_predict(data_arr.T.reshape(1, C, L))
+            if int(np.argmax(pred)) == target_class_temp:
+                # Calculate distance
+                distance = np.linalg.norm(data_arr - sample)
+                if distance < best_distance:
+                    best_distance = distance
+                    best_nun = data_arr
+
+        if best_nun is not None:
+            nun_example = best_nun
+            if verbose:
+                print(f"Found NUN with distance {best_distance:.3f}")
+        else:
+            if verbose:
+                print("Warning: Could not find NUN from target class, using random perturbation")
+            nun_example = sample + np.random.randn(*sample.shape) * 0.1
+    else:
+        nun_example = np.asarray(nun_example)
+        if nun_example.ndim == 1:
+            nun_example = nun_example.reshape(-1, 1)
+        elif nun_example.ndim == 2 and nun_example.shape[0] < nun_example.shape[1]:
+            nun_example = nun_example.T
+
+    # Determine desired class
+    if target_class is None:
+        preds_nun = model_predict(nun_example.T.reshape(1, C, L))
+        target_class = int(np.argmax(preds_nun))
+
+    # Calculate importance heatmaps (using L, C format internally)
+    heatmap_sample = calculate_heatmap_torch(model, sample, device)
+    heatmap_nun = calculate_heatmap_torch(model, nun_example, device)
+    combined_heatmap = (heatmap_sample + heatmap_nun) / 2
+
+    return device, model_predict, sample, nun_example, target_class, combined_heatmap, preds_sample, L, C
+
+
+def _run_subspace_optimizer(optimizer, sample, nun_example, target_class, outlier_calc, combined_heatmap,
+                             model_predict, preds_sample, L, C, verbose):
+    """Run a configured EvolutionaryOptimizer to completion and build the final counterfactual,
+    shared by subspace_cf and subspace_fast (they only differ in which optimizer/outlier
+    calculator they construct beforehand)."""
+    optimizer.init(sample, nun_example, target_class, outlier_calc, combined_heatmap)
+    found_mask, prob, fitness_evol, cf_evol = optimizer.optimize()
+
+    if found_mask is None:
+        if verbose:
+            print('Failed to converge')
+        return sample, preds_sample.reshape(-1)
+
+    # Generate final counterfactual (returns in B, C, L format)
+    cf = optimizer.get_counterfactuals(sample, nun_example, np.expand_dims(found_mask, axis=0))
+    cf = cf.squeeze(0)  # Remove batch dimension -> (C, L)
+
+    # Get final predictions
+    y_cf = model_predict(cf.reshape(1, C, L)).reshape(-1)
+
+    # Convert back to (L, C) format for consistency with other methods
+    cf = cf.T
+
+    return cf, y_cf
+
+
+def subspace_fast(sample, model, target_class=None, dataset=None, nun_example=None,
+                            population_size=100, elite_number=4, offsprings_number=96,
+                            max_iter=100, change_subseq_mutation_prob=0.05,
                             add_subseq_mutation_prob=0, init_pct=0.2, reinit=True,
-                            invalid_penalization=100, alpha=0.2, beta=0.6, 
+                            invalid_penalization=100, alpha=0.2, beta=0.6,
                             eta=0.2, gamma=0.25, sparsity_balancer=0.4,
                             verbose=False):
     """
-    Generate counterfactual explanation using Sub-SpaCE method.
-    
+    Generate counterfactual explanation using the Sub-SpaCE method, adapted for speed.
+
+    Same genetic algorithm as subspace_cf (identical mutation operators, fitness function, and
+    hyperparameters), but with two adaptations that trade fidelity to the official repository's
+    strategy for a much shorter runtime:
+
+    - The evolutionary loop returns as soon as any valid counterfactual is found
+      (best_classification_prob > 0.5) instead of continuing to refine sparsity/plausibility
+      until the population converges or max_iter is reached, which subspace_cf's
+      OriginalNSubsequenceEvolutionaryOptimizer does.
+    - Plausibility is scored with OutlierCalculator, a lightweight per-feature z-score
+      deviation from the training mean -- documented as a stand-in for the real
+      autoencoder-based approach subspace_cf's AutoencoderOutlierCalculator uses.
+
+    This generally makes subspace_fast faster but less sparse, less contiguous, and less
+    plausible than subspace_cf -- see cfts/cf_subspace/subspace_forda_comparison.ipynb for a
+    measured comparison against both subspace_cf and the vendored official code.
+
     Args:
         sample: Input time series to explain (L, C) or (C, L) or 1D
-        dataset: Training dataset for finding native guide
         model: PyTorch classification model
+        target_class: Target class for counterfactual (if None, will be inferred)
+        dataset: Training dataset for finding native guide (required)
         nun_example: Native Unexplained Neighbor (if None, will be found)
-        desired_class: Target class for counterfactual (if None, will be inferred)
         population_size: Size of evolutionary population
         elite_number: Number of elite individuals to preserve
         offsprings_number: Number of offspring to generate
@@ -566,118 +923,28 @@ def subspace_cf(sample, dataset, model, nun_example=None, desired_class=None,
         gamma: Exponent for subsequence percentage
         sparsity_balancer: Balance between point and subsequence sparsity
         verbose: Whether to print progress
-        
+
     Returns:
         Tuple of (counterfactual, prediction_scores)
     """
-    device = next(model.parameters()).device
-    
-    def model_predict(arr):
-        # arr expected shape (B, C, L) - PyTorch convention
-        return detach_to_numpy(model(numpy_to_torch(arr, device)))
-    
-    # Normalize sample to (L, C) format for internal processing
-    sample = np.asarray(sample)
-    if sample.ndim == 1:
-        sample = sample.reshape(-1, 1)  # (L, 1)
-    elif sample.ndim == 2:
-        # Assume (L, C) if L > C, else (C, L)
-        if sample.shape[0] < sample.shape[1]:
-            sample = sample.T
-    
-    L, C = sample.shape
-    
-    # Get predictions for sample (convert to B, C, L for model)
-    preds_sample = model_predict(sample.T.reshape(1, C, L))
-    label_sample = int(np.argmax(preds_sample))
-    
-    # Find or use provided NUN
-    if nun_example is None:
-        # Find native guide: nearest neighbor from target class
-        if verbose:
-            print("Finding native guide (NUN) from dataset...")
-        
-        # Get target class
-        if desired_class is None:
-            # Find most common other class in dataset
-            dataset_labels = []
-            for item in dataset:
-                data = item[0] if isinstance(item, tuple) else item
-                data_arr = np.asarray(data)
-                if data_arr.ndim == 1:
-                    data_arr = data_arr.reshape(-1, 1)
-                elif data_arr.ndim == 2 and data_arr.shape[0] < data_arr.shape[1]:
-                    data_arr = data_arr.T
-                pred = model_predict(data_arr.T.reshape(1, C, L))
-                dataset_labels.append(int(np.argmax(pred)))
-            
-            # Find most common class that's different from sample
-            from collections import Counter
-            class_counts = Counter(dataset_labels)
-            if label_sample in class_counts:
-                del class_counts[label_sample]
-            target_class_temp = class_counts.most_common(1)[0][0] if class_counts else 1 - label_sample
-        else:
-            target_class_temp = desired_class
-        
-        # Find nearest neighbor from target class
-        best_distance = float('inf')
-        best_nun = None
-        for item in dataset:
-            data = item[0] if isinstance(item, tuple) else item
-            data_arr = np.asarray(data)
-            if data_arr.ndim == 1:
-                data_arr = data_arr.reshape(-1, 1)
-            elif data_arr.ndim == 2 and data_arr.shape[0] < data_arr.shape[1]:
-                data_arr = data_arr.T
-            
-            # Check if it's target class
-            pred = model_predict(data_arr.T.reshape(1, C, L))
-            if int(np.argmax(pred)) == target_class_temp:
-                # Calculate distance
-                distance = np.linalg.norm(data_arr - sample)
-                if distance < best_distance:
-                    best_distance = distance
-                    best_nun = data_arr
-        
-        if best_nun is not None:
-            nun_example = best_nun
-            if verbose:
-                print(f"Found NUN with distance {best_distance:.3f}")
-        else:
-            if verbose:
-                print("Warning: Could not find NUN from target class, using random perturbation")
-            nun_example = sample + np.random.randn(*sample.shape) * 0.1
-    else:
-        nun_example = np.asarray(nun_example)
-        if nun_example.ndim == 1:
-            nun_example = nun_example.reshape(-1, 1)
-        elif nun_example.ndim == 2 and nun_example.shape[0] < nun_example.shape[1]:
-            nun_example = nun_example.T
-    
-    # Determine desired class
-    if desired_class is None:
-        preds_nun = model_predict(nun_example.T.reshape(1, C, L))
-        desired_class = int(np.argmax(preds_nun))
-    
-    # Calculate importance heatmaps (using L, C format internally)
-    heatmap_sample = calculate_heatmap_torch(model, sample, device)
-    heatmap_nun = calculate_heatmap_torch(model, nun_example, device)
-    combined_heatmap = (heatmap_sample + heatmap_nun) / 2
-    
+    if dataset is None and nun_example is None:
+        raise ValueError("subspace_fast requires a dataset (to find the NUN) unless nun_example is given.")
+    (device, model_predict, sample, nun_example, target_class, combined_heatmap,
+     preds_sample, L, C) = _prepare_subspace_call(sample, dataset, model, nun_example, target_class, verbose)
+
     # Create simple outlier calculator
     if dataset is not None and len(dataset) > 0:
         # Extract training data - follow multispace.py pattern
         train_samples = []
-        
+
         for x in dataset[:min(100, len(dataset))]:
             item = x[0] if isinstance(x, tuple) else x
             item_arr = np.asarray(item) if not isinstance(item, np.ndarray) else item
-            
+
             # Flatten any extra dimensions and reshape to (L,) first
             if item_arr.ndim > 2:
                 item_arr = item_arr.reshape(-1)
-            
+
             # Normalize to 1D array of length L
             if item_arr.ndim == 2:
                 # If 2D, flatten to 1D
@@ -688,11 +955,11 @@ def subspace_cf(sample, dataset, model, nun_example=None, desired_class=None,
                 else:
                     # Multi-channel, take first channel or flatten
                     item_arr = item_arr.flatten()
-            
+
             # Now item_arr should be 1D (L,)
             if item_arr.ndim == 1 and len(item_arr) == L:
                 train_samples.append(item_arr)
-        
+
         if len(train_samples) >= 10:  # Need at least 10 samples
             # Stack into (N, L)
             train_data = np.stack(train_samples, axis=0)
@@ -703,7 +970,7 @@ def subspace_cf(sample, dataset, model, nun_example=None, desired_class=None,
             outlier_calc = OutlierCalculator(sample.reshape(1, L, C))
     else:
         outlier_calc = OutlierCalculator(sample.reshape(1, L, C))
-    
+
     # Initialize optimizer
     optimizer = NSubsequenceEvolutionaryOptimizer(
         fitness_function_final, model_predict,
@@ -714,24 +981,112 @@ def subspace_cf(sample, dataset, model, nun_example=None, desired_class=None,
         feature_axis=2,
         verbose=verbose
     )
-    
-    # Initialize and run optimization
-    optimizer.init(sample, nun_example, desired_class, outlier_calc, combined_heatmap)
-    found_mask, prob, fitness_evol, cf_evol = optimizer.optimize()
-    
-    if found_mask is None:
+
+    return _run_subspace_optimizer(optimizer, sample, nun_example, target_class, outlier_calc, combined_heatmap,
+                                    model_predict, preds_sample, L, C, verbose)
+
+
+def _extract_calibration_data(dataset, L, C, max_count=100):
+    """Extract up to max_count samples from dataset, normalized to (L, C) shape, stacked into
+    (N, L, C). Returns None if fewer than 10 matching samples are found."""
+    samples = []
+    for x in dataset[:max_count]:
+        item = x[0] if isinstance(x, tuple) else x
+        item_arr = np.asarray(item, dtype=np.float32)
+        if item_arr.ndim == 1:
+            item_arr = item_arr.reshape(-1, 1)  # (L,) -> (L, 1)
+        elif item_arr.ndim == 2 and item_arr.shape[0] < item_arr.shape[1]:
+            item_arr = item_arr.T  # (C, L) -> (L, C)
+        if item_arr.shape == (L, C):
+            samples.append(item_arr)
+    if len(samples) < 10:
+        return None
+    return np.stack(samples, axis=0)
+
+
+def subspace_cf(sample, model, target_class=None, dataset=None, nun_example=None,
+                  population_size=100, elite_number=4, offsprings_number=96,
+                  max_iter=100, change_subseq_mutation_prob=0.05,
+                  add_subseq_mutation_prob=0, init_pct=0.2, reinit=True,
+                  invalid_penalization=100, alpha=0.2, beta=0.6,
+                  eta=0.2, gamma=0.25, sparsity_balancer=0.4,
+                  autoencoder=None, ae_epochs=30,
+                  verbose=False):
+    """
+    Generate counterfactual explanation using the Sub-SpaCE method.
+
+    This repo's canonical Sub-SpaCE implementation: reproduces the official
+    MarioRefoyo/Sub-SpaCE repository's exact optimize() strategy rather than a
+    speed-adapted approximation of it --
+
+    - Plausibility is scored with a real trained autoencoder's reconstruction error
+      (AutoencoderOutlierCalculator), matching the official AEOutlierCalculator.
+    - The evolutionary loop does not stop as soon as a valid counterfactual is found: it keeps
+      refining sparsity/plausibility until the population converges or max_iter is reached
+      (OriginalNSubsequenceEvolutionaryOptimizer).
+
+    For a faster but less faithful variant -- returns on the first valid counterfactual and
+    scores plausibility with a lightweight z-score instead of a trained autoencoder -- see
+    subspace_fast. See cfts/cf_subspace/subspace_forda_comparison.ipynb for a measured
+    comparison of both against the vendored official code.
+
+    Args:
+        sample: Input time series to explain (L, C) or (C, L) or 1D
+        model: PyTorch classification model
+        target_class: Target class for counterfactual (if None, will be inferred)
+        dataset: Training dataset for finding the NUN and calibrating the autoencoder
+            (required unless nun_example is given)
+        nun_example: Native Unexplained Neighbor (if None, will be found)
+        population_size: Size of evolutionary population
+        elite_number: Number of elite individuals to preserve
+        offsprings_number: Number of offspring to generate
+        max_iter: Maximum iterations for evolution
+        change_subseq_mutation_prob: Probability of changing subsequence boundaries
+        add_subseq_mutation_prob: Probability of adding new subsequences
+        init_pct: Initial percentage of activated positions
+        reinit: Whether to reinitialize on failure
+        invalid_penalization: Penalty for invalid counterfactuals
+        alpha: Weight for classification probability
+        beta: Weight for sparsity
+        eta: Weight for outlier score
+        gamma: Exponent for subsequence percentage
+        sparsity_balancer: Balance between point and subsequence sparsity
+        autoencoder: Pre-trained plausibility autoencoder (e.g. from a previous subspace_cf
+            call's outlier calculator, or train_outlier_autoencoder directly) to avoid retraining
+            one from `dataset` on every call. If None, one is trained on-the-fly.
+        ae_epochs: Training epochs for the on-the-fly autoencoder (ignored if `autoencoder` is
+            given).
+        verbose: Whether to print progress
+
+    Returns:
+        Tuple of (counterfactual, prediction_scores)
+    """
+    if dataset is None and nun_example is None:
+        raise ValueError("subspace_cf requires a dataset (to find the NUN) unless nun_example is given.")
+    (device, model_predict, sample, nun_example, target_class, combined_heatmap,
+     preds_sample, L, C) = _prepare_subspace_call(sample, dataset, model, nun_example, target_class, verbose)
+
+    # Create autoencoder-based outlier calculator (matches the official AEOutlierCalculator)
+    calibration_data = _extract_calibration_data(dataset, L, C) if dataset is not None else None
+    if calibration_data is None:
+        calibration_data = sample.reshape(1, L, C)
+
+    if autoencoder is None:
         if verbose:
-            print('Failed to converge')
-        return sample, preds_sample.reshape(-1)
-    
-    # Generate final counterfactual (returns in B, C, L format)
-    cf = optimizer.get_counterfactuals(sample, nun_example, np.expand_dims(found_mask, axis=0))
-    cf = cf.squeeze(0)  # Remove batch dimension -> (C, L)
-    
-    # Get final predictions
-    y_cf = model_predict(cf.reshape(1, C, L)).reshape(-1)
-    
-    # Convert back to (L, C) format for consistency with other methods
-    cf = cf.T
-    
-    return cf, y_cf
+            print(f"Training plausibility autoencoder on {len(calibration_data)} reference samples...")
+        autoencoder = train_outlier_autoencoder(calibration_data, device, epochs=ae_epochs)
+    outlier_calc = AutoencoderOutlierCalculator(autoencoder, calibration_data, device)
+
+    # Initialize optimizer with the official repo's exact optimize() strategy
+    optimizer = OriginalNSubsequenceEvolutionaryOptimizer(
+        fitness_function_final, model_predict,
+        population_size, elite_number, offsprings_number, max_iter,
+        change_subseq_mutation_prob, add_subseq_mutation_prob,
+        init_pct, reinit,
+        invalid_penalization, alpha, beta, eta, gamma, sparsity_balancer,
+        feature_axis=2,
+        verbose=verbose
+    )
+
+    return _run_subspace_optimizer(optimizer, sample, nun_example, target_class, outlier_calc, combined_heatmap,
+                                    model_predict, preds_sample, L, C, verbose)

@@ -49,7 +49,7 @@ def cels_generate(sample,
                   model,
                   X_train,
                   y_train,
-                  target=None,
+                  target_class=None,
                   learning_rate=0.01,
                   max_iter=100,
                   lambda_valid=1.0,
@@ -67,7 +67,7 @@ def cels_generate(sample,
         model: Trained classifier model
         X_train: Training data for finding nearest unlike neighbor
         y_train: Training labels
-        target: Target class (if None, uses second most probable class)
+        target_class: Target class (if None, uses second most probable class)
         learning_rate: Learning rate for optimization
         max_iter: Maximum optimization iterations
         lambda_valid: Weight for validity loss
@@ -114,13 +114,13 @@ def cels_generate(sample,
     y_original = model_predict(sample)[0]
     label_original = int(np.argmax(y_original))
     
-    if target is None:
+    if target_class is None:
         # Find the class with second highest probability
         sorted_indices = np.argsort(y_original)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
     if verbose:
-        print(f"CELS: Original class {label_original}, Target class {target}")
+        print(f"CELS: Original class {label_original}, Target class {target_class}")
     
     # Find nearest unlike neighbor
     # Handle both one-hot encoded and scalar labels
@@ -131,11 +131,11 @@ def cels_generate(sample,
         # Scalar labels
         y_train_labels = y_train.flatten()
     
-    target_mask = y_train_labels == target
+    target_mask = y_train_labels == target_class
     target_instances = X_train[target_mask]
     if len(target_instances) == 0:
         if verbose:
-            print("CELS: No training instances found for target class")
+            print("CELS: No training instances found for target_class class")
         return None, None
     
     # Reshape for distance computation
@@ -176,7 +176,7 @@ def cels_generate(sample,
         output = softmax(model(cf_input))
         
         # Compute losses
-        valid_loss = 1 - output[0, target]
+        valid_loss = 1 - output[0, target_class]
         budget_loss = torch.mean(torch.abs(mask))
         
         # TV norm for smoothness
@@ -213,8 +213,8 @@ def cels_generate(sample,
         # Debug output
         if verbose and i % 20 == 0:
             current_pred = int(output.argmax().item())
-            target_prob = float(output[0, target].item())
-            print(f"CELS iter {i}: pred_class={current_pred}, target={target}, "
+            target_prob = float(output[0, target_class].item())
+            print(f"CELS iter {i}: pred_class={current_pred}, target_class={target_class}, "
                   f"target_prob={target_prob:.4f}, loss={total_loss.item():.4f}")
     
     # Apply threshold to get final saliency mask
@@ -231,7 +231,7 @@ def cels_generate(sample,
     cf_class = int(np.argmax(y_cf))
     
     if verbose:
-        print(f"CELS: Final class {cf_class}, Target {target}, Success: {cf_class == target}")
+        print(f"CELS: Final class {cf_class}, Target {target_class}, Success: {cf_class == target_class}")
     
     # Return in expected shape
     return cf_final.reshape(1, cf_final.shape[0], cf_final.shape[1]), y_cf
@@ -247,7 +247,7 @@ def m_cels_generate(sample,
                     model,
                     X_train,
                     y_train,
-                    target=None,
+                    target_class=None,
                     learning_rate=0.01,
                     max_iter=100,
                     lambda_valid=1.0,
@@ -263,7 +263,7 @@ def m_cels_generate(sample,
         model: Trained classifier model
         X_train: Training data for finding nearest unlike neighbor
         y_train: Training labels
-        target: Target class (if None, uses second most probable class)
+        target_class: Target class (if None, uses second most probable class)
         learning_rate: Learning rate for optimization
         max_iter: Maximum optimization iterations
         lambda_valid: Weight for validity loss
@@ -304,13 +304,13 @@ def m_cels_generate(sample,
     y_original = model_predict(sample)[0]
     label_original = int(np.argmax(y_original))
     
-    if target is None:
+    if target_class is None:
         # Find the class with second highest probability
         sorted_indices = np.argsort(y_original)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
     if verbose:
-        print(f"M-CELS: Original class {label_original}, Target class {target}")
+        print(f"M-CELS: Original class {label_original}, Target class {target_class}")
     
     # Find nearest unlike neighbor
     # Handle both one-hot encoded and scalar labels
@@ -321,12 +321,12 @@ def m_cels_generate(sample,
         # Scalar labels
         y_train_labels = y_train.flatten()
     
-    target_mask = y_train_labels == target
+    target_mask = y_train_labels == target_class
     target_samples = X_train[target_mask]
     
     if len(target_samples) == 0:
         if verbose:
-            print("M-CELS: No training instances found for target class")
+            print("M-CELS: No training instances found for target_class class")
         return None, None
     
     # Reshape for proper distance computation
@@ -345,7 +345,7 @@ def m_cels_generate(sample,
     output = model(x_tensor)
     softmax = nn.Softmax(dim=-1)
     output_probs = softmax(output)
-    target_prob = output_probs[0, target]
+    target_prob = output_probs[0, target_class]
     target_prob.backward()
     
     # Use gradient magnitude as initial saliency
@@ -375,7 +375,7 @@ def m_cels_generate(sample,
         output = softmax(model(cf_tensor))
         
         # Compute loss components
-        valid_loss = 1 - output[0, target]
+        valid_loss = 1 - output[0, target_class]
         sparsity_loss = torch.mean(torch.abs(mask))
         
         # Smoothness loss (temporal and feature-wise)
@@ -404,7 +404,7 @@ def m_cels_generate(sample,
         
         # Check validity
         current_class = int(output.argmax().item())
-        if current_class == target:
+        if current_class == target_class:
             if verbose:
                 print(f"M-CELS: Found valid counterfactual at iteration {i}")
             best_cf = cf_tensor.detach().cpu().numpy()
@@ -412,8 +412,8 @@ def m_cels_generate(sample,
         
         # Debug output
         if verbose and i % 20 == 0:
-            target_prob = float(output[0, target].item())
-            print(f"M-CELS iter {i}: pred_class={current_class}, target={target}, "
+            target_prob = float(output[0, target_class].item())
+            print(f"M-CELS iter {i}: pred_class={current_class}, target_class={target_class}, "
                   f"target_prob={target_prob:.4f}, loss={total_loss.item():.4f}")
     
     if best_cf is None:
@@ -426,7 +426,7 @@ def m_cels_generate(sample,
     
     if verbose:
         cf_class = int(np.argmax(y_cf))
-        print(f"M-CELS: Final class {cf_class}, Target {target}, Success: {cf_class == target}")
+        print(f"M-CELS: Final class {cf_class}, Target {target_class}, Success: {cf_class == target_class}")
     
     return best_cf, y_cf
 
@@ -435,7 +435,7 @@ def cels_auto(sample,
               model,
               X_train,
               y_train,
-              target=None,
+              target_class=None,
               verbose=False,
               **kwargs):
     """Automatically select between CELS and M-CELS based on input dimensionality.
@@ -445,7 +445,7 @@ def cels_auto(sample,
         model: Trained classifier model
         X_train: Training data
         y_train: Training labels
-        target: Target class (if None, uses second most probable class)
+        target_class: Target class (if None, uses second most probable class)
         verbose: Whether to print progress information
         **kwargs: Additional arguments passed to CELS or M-CELS
         
@@ -459,8 +459,8 @@ def cels_auto(sample,
     if is_multivariate:
         if verbose:
             print("Auto-CELS: Using M-CELS for multivariate data")
-        return m_cels_generate(sample, model, X_train, y_train, target, verbose=verbose, **kwargs)
+        return m_cels_generate(sample, model, X_train, y_train, target_class, verbose=verbose, **kwargs)
     else:
         if verbose:
             print("Auto-CELS: Using CELS for univariate data")
-        return cels_generate(sample, model, X_train, y_train, target, verbose=verbose, **kwargs)
+        return cels_generate(sample, model, X_train, y_train, target_class, verbose=verbose, **kwargs)

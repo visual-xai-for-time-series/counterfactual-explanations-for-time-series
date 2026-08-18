@@ -32,9 +32,9 @@ from typing import Optional, Tuple, Union
 
 def fft_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     max_iterations: int = 1000,
     frequency_bands: str = "all",  # "all", "low", "high", "mid"
     modification_strategy: str = "amplitude",  # "amplitude", "phase", "both"
@@ -371,9 +371,9 @@ def _reshape_to_original(sample: np.ndarray, original_shape: tuple) -> np.ndarra
 
 def fft_gradient_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     max_iterations: int = 500,
     learning_rate: float = 0.01,
     lambda_proximity: float = 0.1,
@@ -532,9 +532,9 @@ def fft_gradient_cf(
 
 def fft_nn_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     k: int = 5,
     blend_ratio: float = 0.5,
     frequency_bands: str = "all",
@@ -566,6 +566,8 @@ def fft_nn_cf(
     Returns:
         Tuple of (counterfactual_sample, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("fft_nn_cf requires a dataset to find the k nearest unlike neighbors.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -732,9 +734,9 @@ def fft_nn_cf(
 
 def fft_adaptive_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     k: int = 5,
     use_saliency: bool = True,
     device: str = None,
@@ -759,6 +761,8 @@ def fft_adaptive_cf(
     Returns:
         Tuple of (counterfactual_sample, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("fft_adaptive_cf requires a dataset to find the k nearest unlike neighbors.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -928,9 +932,9 @@ def fft_adaptive_cf(
 
 def fft_iterative_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     k: int = 5,
     refine_iterations: int = 50,
     refine_lr: float = 0.01,
@@ -957,8 +961,10 @@ def fft_iterative_cf(
     Returns:
         Tuple of (counterfactual_sample, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("fft_iterative_cf requires a dataset to find the k nearest unlike neighbors.")
     # First, get initial counterfactual using NN approach
-    initial_cf, initial_pred = fft_nn_cf(sample, dataset, model, target_class, k, 
+    initial_cf, initial_pred = fft_nn_cf(sample, model, target_class, dataset, k,
                                           device=device, verbose=False)
     
     if initial_cf is None:
@@ -1065,9 +1071,9 @@ def fft_iterative_cf(
 
 def fft_smart_blend_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     k: int = 5,
     search_method: str = "binary",  # "binary" or "golden"
     tolerance: float = 0.01,
@@ -1094,6 +1100,8 @@ def fft_smart_blend_cf(
     Returns:
         Tuple of (counterfactual_sample, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("fft_smart_blend_cf requires a dataset to find the k nearest unlike neighbors.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -1308,9 +1316,9 @@ def fft_smart_blend_cf(
 
 def fft_freq_distance_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     k: int = 5,
     freq_weight_strategy: str = "importance",  # "uniform", "importance", "decay"
     device: str = None,
@@ -1335,6 +1343,8 @@ def fft_freq_distance_cf(
     Returns:
         Tuple of (counterfactual_sample, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("fft_freq_distance_cf requires a dataset to find the k nearest unlike neighbors.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -1472,9 +1482,9 @@ def fft_freq_distance_cf(
 
 def fft_wavelet_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     k: int = 5,
     wavelet: str = "db4",
     level: int = 3,
@@ -1501,12 +1511,14 @@ def fft_wavelet_cf(
     Returns:
         Tuple of (counterfactual_sample, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("fft_wavelet_cf requires a dataset to find the k nearest unlike neighbors.")
     try:
         import pywt
     except ImportError:
         if verbose:
             print("FFT-Wavelet: PyWavelets not installed, falling back to FFT")
-        return fft_nn_cf(sample, dataset, model, target_class, k, device=device, verbose=verbose)
+        return fft_nn_cf(sample, model, target_class, dataset, k, device=device, verbose=verbose)
     
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -1657,9 +1669,9 @@ def fft_wavelet_cf(
 
 def fft_hybrid_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     k: int = 5,
     analyze_importance: bool = True,
     device: str = None,
@@ -1684,6 +1696,8 @@ def fft_hybrid_cf(
     Returns:
         Tuple of (counterfactual_sample, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("fft_hybrid_cf requires a dataset to find the k nearest unlike neighbors.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -1874,9 +1888,9 @@ def fft_hybrid_cf(
 
 def fft_progressive_cf(
     sample: np.ndarray,
-    dataset,
     model: nn.Module,
     target_class: Optional[int] = None,
+    dataset=None,
     k: int = 5,
     steps_per_neighbor: int = 5,
     device: str = None,
@@ -1913,6 +1927,8 @@ def fft_progressive_cf(
     Returns:
         Tuple of (counterfactual_sample, prediction) or (None, None) if failed
     """
+    if dataset is None:
+        raise ValueError("fft_progressive_cf requires a dataset to find the k nearest unlike neighbors.")
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -2050,9 +2066,9 @@ def fft_progressive_cf(
 
 def fft_confidence_threshold_cf(
     sample,
-    dataset,
     model,
-    target_class,
+    target_class=None,
+    dataset=None,
     k=5,
     confidence_threshold=0.85,
     max_steps=50,
@@ -2080,6 +2096,10 @@ def fft_confidence_threshold_cf(
         counterfactual: Generated counterfactual time series
         prediction: Model prediction for the counterfactual
     """
+    if target_class is None:
+        raise ValueError("fft_confidence_threshold_cf requires an explicit target_class.")
+    if dataset is None:
+        raise ValueError("fft_confidence_threshold_cf requires a dataset to find the k nearest unlike neighbors.")
     device = next(model.parameters()).device
     original_shape = sample.shape
     sample = sample.reshape(-1)
@@ -2203,9 +2223,9 @@ def fft_confidence_threshold_cf(
 
 def fft_hybrid_enhanced_cf(
     sample,
-    dataset,
     model,
-    target_class,
+    target_class=None,
+    dataset=None,
     k=5,
     analyze_importance=True,
     fallback_on_failure=True,
@@ -2232,6 +2252,10 @@ def fft_hybrid_enhanced_cf(
         counterfactual: Generated counterfactual time series
         prediction: Model prediction for the counterfactual
     """
+    if target_class is None:
+        raise ValueError("fft_hybrid_enhanced_cf requires an explicit target_class.")
+    if dataset is None:
+        raise ValueError("fft_hybrid_enhanced_cf requires a dataset to find the k nearest unlike neighbors.")
     device = next(model.parameters()).device
     original_shape = sample.shape
     sample = sample.reshape(-1)
@@ -2402,9 +2426,9 @@ def fft_hybrid_enhanced_cf(
 
 def fft_band_optimizer_cf(
     sample,
-    dataset,
     model,
-    target_class,
+    target_class=None,
+    dataset=None,
     k=5,
     num_bands=3,
     use_saliency=True,
@@ -2431,6 +2455,10 @@ def fft_band_optimizer_cf(
         counterfactual: Generated counterfactual time series
         prediction: Model prediction for the counterfactual
     """
+    if target_class is None:
+        raise ValueError("fft_band_optimizer_cf requires an explicit target_class.")
+    if dataset is None:
+        raise ValueError("fft_band_optimizer_cf requires a dataset to find the k nearest unlike neighbors.")
     device = next(model.parameters()).device
     original_shape = sample.shape
     sample = sample.reshape(-1)

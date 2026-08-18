@@ -348,26 +348,29 @@ def mine_motifs_stumpy(dataset, lengths_ratio=[0.1, 0.15, 0.2], top_k=10, verbos
     return best_motifs
 
 
-def mg_cf_generate_stumpy(sample, dataset, model, motifs=None, target=None, 
+def mg_cf_generate_stumpy(sample, model, target_class=None, dataset=None, motifs=None,
                           lengths_ratio=[0.1, 0.15, 0.2], top_k=10, verbose=False):
     """Generate counterfactual explanation using STUMPY-based Motif-Guided approach.
-    
+
     This implements Algorithm 2 from the MG-CF paper using matrix profiles for
     efficient motif discovery.
-    
+
     Args:
         sample: Input time series to explain (numpy array or torch tensor)
-        dataset: Training dataset used for motif mining (list of (x, y) tuples)
         model: Trained classifier model
+        target_class: Target class for counterfactual (if None, will use opposite of prediction)
+        dataset: Training dataset used for motif mining (list of (x, y) tuples).
+            Required unless pre-mined `motifs` are passed in.
         motifs: Pre-mined motifs (if None, will mine from dataset using STUMPY)
-        target: Target class for counterfactual (if None, will use opposite of prediction)
         lengths_ratio: Ratios for motif lengths if mining is needed (default: [0.1, 0.15, 0.2])
         top_k: Number of top candidates to evaluate per motif length
         verbose: Whether to print debug information
-        
+
     Returns:
         Tuple of (counterfactual_sample, prediction_scores) or (None, None) if failed
     """
+    if dataset is None and motifs is None:
+        raise ValueError("mg_cf_generate_stumpy requires either a dataset (to mine motifs) or pre-mined motifs.")
     device = next(model.parameters()).device
     
     def model_predict(data):
@@ -400,13 +403,13 @@ def mg_cf_generate_stumpy(sample, dataset, model, motifs=None, target=None,
     orig_class = int(np.argmax(y_orig))
     
     # Determine target class
-    if target is None:
+    if target_class is None:
         # Find the class with second highest probability
         sorted_indices = np.argsort(y_orig)[::-1]
-        target = int(sorted_indices[1])
+        target_class = int(sorted_indices[1])
     
     if verbose:
-        print(f"MG-CF STUMPY Generate: Original class {orig_class}, Target class {target}")
+        print(f"MG-CF STUMPY Generate: Original class {orig_class}, Target class {target_class}")
     
     # Mine motifs if not provided
     if motifs is None:
@@ -415,13 +418,13 @@ def mg_cf_generate_stumpy(sample, dataset, model, motifs=None, target=None,
         motifs = mine_motifs_stumpy(dataset, lengths_ratio=lengths_ratio, top_k=top_k, verbose=verbose)
     
     # Check if we have motifs for the target class
-    if target not in motifs:
+    if target_class not in motifs:
         if verbose:
-            print(f"MG-CF STUMPY Generate: No motif found for target class {target}")
+            print(f"MG-CF STUMPY Generate: No motif found for target class {target_class}")
         return None, None
     
     # Extract motif information for target class
-    ts_idx, start_idx, end_idx, motif, quality = motifs[target]
+    ts_idx, start_idx, end_idx, motif, quality = motifs[target_class]
     
     # Get the source time series from dataset
     if isinstance(dataset[ts_idx], tuple):
@@ -458,8 +461,8 @@ def mg_cf_generate_stumpy(sample, dataset, model, motifs=None, target=None,
     cf_class = int(np.argmax(y_cf))
     
     if verbose:
-        print(f"MG-CF STUMPY Generate: Counterfactual class {cf_class}, target {target}")
-        if cf_class == target:
+        print(f"MG-CF STUMPY Generate: Counterfactual class {cf_class}, target_class {target_class}")
+        if cf_class == target_class:
             print(f"MG-CF STUMPY Generate: Successfully generated valid counterfactual!")
         else:
             print(f"MG-CF STUMPY Generate: Counterfactual did not flip to target class")
@@ -467,7 +470,7 @@ def mg_cf_generate_stumpy(sample, dataset, model, motifs=None, target=None,
     return cf_sample, y_cf
 
 
-def mg_cf_batch_stumpy(samples, dataset, model, motifs=None, target=None,
+def mg_cf_batch_stumpy(samples, dataset, model, motifs=None, target_class=None,
                        lengths_ratio=[0.1, 0.15, 0.2], top_k=10, verbose=False):
     """Generate counterfactual explanations for a batch using STUMPY-based approach.
     
@@ -476,7 +479,7 @@ def mg_cf_batch_stumpy(samples, dataset, model, motifs=None, target=None,
         dataset: Training dataset for motif mining
         model: Trained classifier model
         motifs: Pre-mined motifs (if None, will mine once and reuse)
-        target: Target class (if None, will determine per sample)
+        target_class: Target class (if None, will determine per sample)
         lengths_ratio: Ratios for motif lengths (default: [0.1, 0.15, 0.2])
         top_k: Number of top candidates per length
         verbose: Whether to print progress
@@ -497,11 +500,11 @@ def mg_cf_batch_stumpy(samples, dataset, model, motifs=None, target=None,
             print(f"MG-CF STUMPY Batch: Processing sample {i}/{len(samples)}")
         
         cf, pred = mg_cf_generate_stumpy(
-            sample, 
-            dataset, 
-            model, 
-            motifs=motifs, 
-            target=target,
+            sample,
+            model,
+            target_class=target_class,
+            dataset=dataset,
+            motifs=motifs,
             verbose=False
         )
         
