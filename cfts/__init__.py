@@ -11,7 +11,6 @@ Available Algorithms:
 - CFE4MTS counterfactuals (cf_cfe4mts)
 - CFWOT counterfactuals (cf_cfwot)
 - CGM counterfactuals (cf_cgm)
-- CoDec counterfactuals (cf_codec)
 - Comte counterfactuals (cf_comte)
 - Confetti counterfactuals (cf_confetti)
 - CoUNTS counterfactuals (cf_counts)
@@ -52,7 +51,6 @@ from . import (
     cf_cfe4mts,
     cf_cfwot,
     cf_cgm,
-    cf_codec,
     cf_comte,
     cf_confetti,
     cf_counts,
@@ -91,7 +89,6 @@ __all__ = [
     "cf_cfe4mts",
     "cf_cfwot",
     "cf_cgm",
-    "cf_codec",
     "cf_comte",
     "cf_confetti",
     "cf_counts",
@@ -131,7 +128,6 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_cfe4mts",
     "cf_cfwot",
     "cf_cgm",
-    "cf_codec",
     "cf_comte",
     "cf_confetti",
     "cf_counts",
