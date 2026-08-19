@@ -326,6 +326,51 @@ cf, prediction = fft_gradient_cf(
 
 ---
 
+#### TopGrad-CF - Gradient-Guided Counterfactual Explanations for Time Series Classification (2026)
+**Implementation:** `cfts/cf_topgrad/topgrad_cf.py`
+
+**Description:** Starts from a Nearest-Unlike-Neighbour prototype (as in Native Guide) and optimises toward it with Adam, but at every step keeps only the top `top_k_frac` fraction of the loss gradient by magnitude and zeroes out the rest before the optimiser step — the "TopGrad" masking that restricts each update to the handful of time steps the model is currently most sensitive to. Runs in two phases: a coarse sweep across orders of magnitude of the proximity weight to bracket a workable value, then a refinement stage that additionally restricts updates to a single contiguous "prominent segment" (the window with the largest `|sample - prototype|` gap) and grows that window until the counterfactual is confidently valid. Ported from the authors' TensorFlow-1/Alibi reference implementation to plain PyTorch, with documented, deliberate deviations (see the module docstring) confirmed by cloning and actually running the reference end-to-end in `cfts/cf_topgrad/topgrad_coffee_comparison.ipynb` — most notably, the reference computes but never backpropagates its own classifier loss, leaving prototype proximity as the only force pulling the candidate toward the target class; this port adds it back in.
+
+**Key Features:**
+- **Prototype-guided**: seeds the search from a Nearest-Unlike-Neighbour, exactly as in Native Guide
+- **TopGrad masking**: each optimiser step only updates the top-k% highest-magnitude gradient positions, leaving the rest of the series untouched
+- **Two-phase search**: an exponential lambda-bracketing sweep followed by a growing-segment refinement stage that progressively widens the region allowed to change
+- **Gradient-guided objective**: classifier loss, L1/L2 proximity to both the original sample and the prototype, and a smoothness penalty, all optimised jointly with Adam
+- **Reproduction-verified**: deviations from the authors' TensorFlow-1 reference are documented and were confirmed by running that reference code directly, not just by reading it
+
+**Reference:**
+```bibtex
+@inproceedings{hosseinzadeh2026topgrad,
+  title={TopGrad-CF: Gradient-Guided Counterfactual Explanations for Time Series Classification},
+  author={Hosseinzadeh, Pouya and others},
+  booktitle={International Conference on Pattern Recognition (ICPR)},
+  year={2026},
+  publisher={Springer},
+  doi={10.1007/978-3-032-31933-3_35}
+}
+```
+
+**Links:**
+- Paper: [DOI:10.1007/978-3-032-31933-3_35](https://link.springer.com/chapter/10.1007/978-3-032-31933-3_35)
+- Repository: [https://github.com/pouyahosseinzadeh/TopGrad-CF](https://github.com/pouyahosseinzadeh/TopGrad-CF)
+
+**Usage Example:**
+```python
+from cfts.cf_topgrad.topgrad_cf import topgrad_cf
+
+cf, prediction = topgrad_cf(
+    sample=sample,
+    model=model,
+    target_class=1,
+    dataset=dataset,       # required — used for the NUN prototype search
+    top_k_frac=0.03,       # fraction of gradient positions updated per step
+    max_iter=200,
+    seed=42,
+)
+```
+
+---
+
 ### Evolutionary Methods
 
 #### 5. MOC/DANDL - Multi-Objective Counterfactuals (2020)
