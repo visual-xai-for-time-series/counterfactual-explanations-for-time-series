@@ -29,6 +29,17 @@ Reference:
 Links:
 - Paper: https://ieeexplore.ieee.org/document/10020866
 - GitHub: https://github.com/Luckilyeee/SG-CF
+
+Note on "SG binary" vs. "SG multi-class": the TS-Counterfactual-Explanation-
+Bake-off benchmark ships this as two separate scripts, `mainTS.py` (binary)
+and `mainTS_mulclass.py` (multi-class) — diffing them shows the only
+differences are bookkeeping (multi-class keeps 1 shapelet per class instead
+of the top 2, and evaluates on a multi-class dataset instead of a binary
+one); the `TFCounterFactual` optimisation itself is identical between the
+two. `target_class` here is already a plain integer class index with no
+binary-only assumptions anywhere in this module (no hardcoded `1 - label`),
+so `sg_cf`/`sg_cf_fast` already cover both bake-off scripts without any
+separate "multi-class variant" needed.
 """
 
 import numpy as np

@@ -253,3 +253,187 @@ def native_guide_uni_cf(
 
     # --- 7. Restore the original input orientation before returning ---
     return revert_orientation(cf, ori), scores_cf
+
+
+####
+# Native Guide — DBA variant (NG-DBA)
+#
+# Paper: Delaney, E., Greene, D., & Keane, M. T. (2021).
+#        "Instance-based counterfactual explanations for time series classification."
+#        International Conference on Case-Based Reasoning, Springer
+#
+# Repository: https://github.com/e-delaney/Instance-Based_CFE_TSC (dba.py)
+#
+# This is the sibling variant to `native_guide_uni_cf` (which follows the
+# repo's NG-CAM script): instead of transplanting a growing window from the
+# NUN, NG-DBA blends the query and its NUN directly in *value* space via
+# DTW Barycenter Averaging (DBA), walking the blend weight from "all query"
+# towards "all NUN" until the target class is confidently reached.
+#
+# Algorithm outline:
+#   1. Predict the class of the query sample.
+#   2. Find the Nearest Unlike Neighbor (NUN) via a *DTW* k-NN search
+#      (tslearn's KNeighborsTimeSeries) — not euclidean — matching the
+#      original NG-DBA script, which is the whole reason DBA (a DTW-aware
+#      barycenter) rather than a linear interpolation is used for the blend.
+#   3. Blend query and NUN with `dtw_barycenter_averaging([query, nun],
+#      weights=[1-beta, beta])`, starting at beta=0 and stepping by
+#      `beta_step` until the target class's probability exceeds
+#      `prob_threshold`.
+#   4. If beta reaches 1 without crossing the threshold, default to the raw
+#      NUN itself (matching the original script's "defaulting" behaviour).
+####
+
+
+def native_guide_dba_cf(
+    sample: np.ndarray | list,
+    model: torch.nn.Module,
+    target_class: int | None = None,
+    dataset: list | np.ndarray = None,
+    max_samples: int | None = None,
+    beta_step: float = 0.05,
+    prob_threshold: float = 0.5,
+    dtw_max_iter: int = 10,
+    verbose: bool = False,
+    *args,
+    **kwargs,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Generate a Native Guide / NG-DBA counterfactual via DTW barycenter blending.
+
+    Univariate only (DBA barycenter averaging here is computed over a single
+    channel per the original script). See the module-level notes above for
+    the algorithm and its relationship to `native_guide_uni_cf` (NG-CAM
+    style).
+
+    Parameters
+    ----------
+    sample, model, target_class, dataset:
+        Same semantics as `native_guide_uni_cf`.
+    max_samples:
+        Optional cap on how much of `dataset` is used for NUN search
+        (stratified subsample) — DTW k-NN is O(N) DTW alignments per query.
+    beta_step:
+        Increment added to the DBA blend weight each iteration (bake-off
+        default: 0.05).
+    prob_threshold:
+        Target-class probability the blend must exceed to be accepted
+        (bake-off default: 0.5).
+    dtw_max_iter:
+        Max iterations for the inner DBA optimisation itself (tslearn's
+        `dtw_barycenter_averaging(..., max_iter=...)`), not to be confused
+        with the beta-stepping loop.
+    verbose:
+        Print per-iteration diagnostics when True.
+
+    Returns
+    -------
+    counterfactual : np.ndarray, same shape/orientation as `sample`.
+    scores : np.ndarray, shape (num_classes,) — model output for the CF.
+    """
+    try:
+        from tslearn.neighbors import KNeighborsTimeSeries
+        from tslearn.barycenters import dtw_barycenter_averaging
+    except ImportError as e:
+        raise ImportError(
+            "native_guide_dba_cf requires tslearn (pip install tslearn>=0.6.3)."
+        ) from e
+
+    device = next(model.parameters()).device
+
+    if max_samples is not None:
+        dataset = subsample_dataset(dataset, max_samples)
+
+    sample_cl, ts, ori = ensure_ncl(np.asarray(sample, dtype=np.float32), dataset)
+    N, C, L = ts.shape
+    if C != 1:
+        raise ValueError(
+            "native_guide_dba_cf currently supports univariate series only "
+            f"(got {C} channels); use native_guide_uni_cf for the window-"
+            "transplant (NG-CAM style) variant instead."
+        )
+
+    preds_data = batched_predict(model, ts, device)
+    with torch.no_grad():
+        preds_sample = detach_to_numpy(
+            model(numpy_to_torch(sample_cl.reshape(1, C, L), device))
+        )
+    label_data = np.argmax(preds_data, axis=1)
+    label_sample = int(np.argmax(preds_sample))
+
+    if target_class is None:
+        # Bake-off's NG-DBA always targets the 2nd most probable class.
+        sorted_idx = np.argsort(preds_sample.reshape(-1))[::-1]
+        target_class = int(sorted_idx[1])
+
+    if target_class == label_sample:
+        raise ValueError(
+            f"target_class ({target_class}) is the same as the query's predicted "
+            f"class ({label_sample}). Choose a different target class."
+        )
+
+    mask = label_data == target_class
+    if not np.any(mask):
+        if verbose:
+            print(
+                f"[NG-DBA] No candidate found for target_class={target_class}. "
+                "Returning original sample unchanged."
+            )
+        return revert_orientation(sample_cl, ori), preds_sample.reshape(-1)
+
+    candidates = ts[mask]  # (M, C, L)
+
+    # --- DTW k-NN NUN search (tslearn wants (n_series, sz, d)) ---
+    candidates_lc = candidates.transpose(0, 2, 1)  # (M, L, C)
+    query_lc = sample_cl.T.reshape(1, L, C)        # (1, L, C)
+
+    knn = KNeighborsTimeSeries(n_neighbors=1, metric="dtw")
+    knn.fit(candidates_lc)
+    _, idxs = knn.kneighbors(query_lc, return_distance=True)
+    nun_idx = int(idxs[0, 0])
+    nun_cl = candidates[nun_idx]  # (C, L)
+
+    if verbose:
+        print(f"[NG-DBA] Query class: {label_sample} | NUN class (target): {target_class}")
+
+    # --- Grow the DBA blend weight from "all query" to "all NUN" ---
+    query_lc1 = sample_cl.T  # (L, C)
+    nun_lc1 = nun_cl.T       # (L, C)
+
+    beta = 0.0
+    defaulted = True
+    cf_cl = nun_cl  # fallback if beta reaches 1 without crossing the threshold
+
+    while beta < 1.0:
+        blend_lc = dtw_barycenter_averaging(
+            [query_lc1, nun_lc1],
+            barycenter_size=L,
+            max_iter=dtw_max_iter,
+            weights=np.array([1.0 - beta, beta]),
+        )
+        blend_cl = blend_lc.T.reshape(C, L).astype(np.float32)
+
+        with torch.no_grad():
+            pred = detach_to_numpy(
+                model(numpy_to_torch(blend_cl.reshape(1, C, L), device))
+            ).reshape(-1)
+        prob_target = float(pred[target_class])
+
+        if verbose:
+            print(f"[NG-DBA] beta={beta:.2f} target_prob={prob_target:.3f}")
+
+        if prob_target > prob_threshold:
+            cf_cl = blend_cl
+            defaulted = False
+            break
+
+        beta += beta_step
+
+    if verbose and defaulted:
+        print("[NG-DBA] beta reached 1.0 without crossing prob_threshold; defaulting to raw NUN.")
+
+    with torch.no_grad():
+        scores_cf = detach_to_numpy(
+            model(numpy_to_torch(cf_cl.reshape(1, C, L), device))
+        ).reshape(-1)
+
+    return revert_orientation(cf_cl, ori), scores_cf

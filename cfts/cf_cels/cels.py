@@ -238,6 +238,202 @@ def cels_generate(sample,
 
 
 ####
+# InfoCELS: soft-mask variant of CELS
+#
+# Paper: Li, P., Bahri, O., Filali, S., & Hamdi, S. M. — InfoCELS
+#        (companion method to CELS; see cels_generate's docstring for the
+#        CELS paper reference).
+# GitHub: https://github.com/Luckilyeee/Info-CELS
+#
+# Bake-off's own `counterfactual_infocels.py` differs from its
+# `counterfactual_cels.py` in exactly two ways once the two are diffed:
+#   1. The trained mask is used **as-is** — no min-max normalisation, no
+#      thresholding. CELS binarises the mask into a hard 0/1 replacement
+#      pattern at the end; InfoCELS returns the continuous blend directly.
+#   2. Early stopping requires the loss to have plateaued for 30 iterations
+#      *and* the target-class probability to already exceed 0.5 — CELS only
+#      requires the loss plateau. So InfoCELS won't stop early on a plateau
+#      that hasn't reached a usable confidence yet.
+#
+# This function is `cels_generate` with exactly those two changes; everything
+# else (NUN search, loss terms, optimiser, LR decay) is identical on purpose,
+# so the two are directly comparable.
+####
+def infocels_generate(sample,
+                      model,
+                      X_train,
+                      y_train,
+                      target_class=None,
+                      learning_rate=0.01,
+                      max_iter=1000,
+                      lambda_valid=1.0,
+                      lambda_budget=1.0,
+                      lambda_tv=1.0,
+                      tv_beta=3,
+                      enable_lr_decay=True,
+                      lr_decay=0.999,
+                      target_prob_stop=0.5,
+                      verbose=False):
+    """Generate a counterfactual using InfoCELS (soft-mask CELS variant).
+
+    Args:
+        sample: Original time series sample
+        model: Trained classifier model
+        X_train: Training data for finding nearest unlike neighbor
+        y_train: Training labels
+        target_class: Target class (if None, uses second most probable class)
+        learning_rate: Learning rate for optimization
+        max_iter: Maximum optimization iterations
+        lambda_valid: Weight for validity loss
+        lambda_budget: Weight for budget (sparsity) loss
+        lambda_tv: Weight for total variation loss
+        tv_beta: Beta parameter for TV norm
+        enable_lr_decay: Whether to use learning rate decay
+        lr_decay: Learning rate decay factor
+        target_prob_stop: Target-class probability threshold that must be
+            exceeded (in addition to loss plateauing) before early stopping
+            is allowed — matches bake-off's InfoCELS condition.
+        verbose: Whether to print progress information
+
+    Returns:
+        Counterfactual sample (continuous mask blend, not binarised) and
+        prediction, or (None, None) if failed.
+    """
+    device = next(model.parameters()).device
+
+    def model_predict(data):
+        """Get model prediction."""
+        if isinstance(data, np.ndarray):
+            data_tensor = torch.tensor(data, dtype=torch.float32, device=device)
+        else:
+            data_tensor = data
+
+        if len(data_tensor.shape) == 1:
+            data_tensor = data_tensor.reshape(1, 1, -1)
+        elif len(data_tensor.shape) == 2:
+            if data_tensor.shape[0] > data_tensor.shape[1]:
+                data_tensor = data_tensor.T
+            data_tensor = data_tensor.unsqueeze(0)
+
+        return detach_to_numpy(model(data_tensor))
+
+    if (len(sample.shape) == 3 and sample.shape[1] > 1) or \
+       (len(sample.shape) == 2 and sample.shape[0] > 1):
+        raise ValueError("InfoCELS only supports univariate time series.")
+
+    if len(sample.shape) == 3:
+        sample = sample.reshape(sample.shape[1], sample.shape[2])
+
+    y_original = model_predict(sample)[0]
+    label_original = int(np.argmax(y_original))
+
+    if target_class is None:
+        sorted_indices = np.argsort(y_original)[::-1]
+        target_class = int(sorted_indices[1])
+
+    if verbose:
+        print(f"InfoCELS: Original class {label_original}, Target class {target_class}")
+
+    if len(y_train.shape) > 1 and y_train.shape[1] > 1:
+        y_train_labels = np.argmax(y_train, axis=1)
+    else:
+        y_train_labels = y_train.flatten()
+
+    target_mask = y_train_labels == target_class
+    target_instances = X_train[target_mask]
+    if len(target_instances) == 0:
+        if verbose:
+            print("InfoCELS: No training instances found for target_class class")
+        return None, None
+
+    sample_flat = sample.reshape(1, -1)
+    target_instances_flat = target_instances.reshape(len(target_instances), -1)
+
+    nbrs = NearestNeighbors(n_neighbors=1).fit(target_instances_flat)
+    _, indices = nbrs.kneighbors(sample_flat)
+    nun = target_instances[indices[0][0]]
+
+    if verbose:
+        print("InfoCELS: Found nearest unlike neighbor")
+
+    x_tensor = torch.tensor(sample, dtype=torch.float32, device=device, requires_grad=False)
+    nun_tensor = torch.tensor(nun, dtype=torch.float32, device=device, requires_grad=False)
+
+    mask_init = np.random.uniform(size=[1, sample.shape[-1]], low=0, high=1)
+    mask = Variable(torch.from_numpy(mask_init).float().to(device), requires_grad=True)
+
+    optimizer = torch.optim.Adam([mask], lr=learning_rate)
+    if enable_lr_decay:
+        scheduler = ExponentialLR(optimizer, gamma=lr_decay)
+
+    softmax = nn.Softmax(dim=-1)
+    best_loss = float('inf')
+    counter = 0
+    max_no_improve = 30
+    imp_threshold = 0.001
+
+    cf_tensor = x_tensor * (1 - mask) + nun_tensor * mask
+    target_prob = 0.0
+
+    for i in range(max_iter):
+        cf_tensor = x_tensor * (1 - mask) + nun_tensor * mask
+        cf_input = cf_tensor.reshape(1, 1, -1).float()
+        output = softmax(model(cf_input))
+
+        valid_loss = 1 - output[0, target_class]
+        budget_loss = torch.mean(torch.abs(mask))
+        diffs = torch.abs(mask[..., 1:] - mask[..., :-1])
+        tv_loss = torch.mean(torch.pow(diffs, tv_beta))
+
+        total_loss = (lambda_valid * valid_loss +
+                     lambda_budget * budget_loss +
+                     lambda_tv * tv_loss)
+
+        if best_loss - total_loss < imp_threshold:
+            counter += 1
+        else:
+            counter = 0
+            best_loss = total_loss
+
+        target_prob = float(output[0, target_class].item())
+
+        # InfoCELS-specific stopping condition: loss plateau *and* the
+        # target class already has usable confidence — matches bake-off's
+        # `target_prob > 0.5 and counter >= 30`, unlike CELS which stops on
+        # the plateau alone.
+        if target_prob > target_prob_stop and counter >= max_no_improve:
+            if verbose:
+                print(f"InfoCELS: Early stopping at iteration {i}")
+            break
+
+        optimizer.zero_grad()
+        total_loss.backward()
+        optimizer.step()
+
+        if enable_lr_decay:
+            scheduler.step()
+
+        mask.data.clamp_(0, 1)
+
+        if verbose and i % 20 == 0:
+            current_pred = int(output.argmax().item())
+            print(f"InfoCELS iter {i}: pred_class={current_pred}, target_class={target_class}, "
+                  f"target_prob={target_prob:.4f}, loss={total_loss.item():.4f}")
+
+    # No thresholding here — InfoCELS returns the continuous mask blend from
+    # the final iteration directly, unlike CELS's binarised replacement.
+    cf_final = detach_to_numpy(cf_tensor.reshape(sample.shape))
+    y_cf = model_predict(cf_final)[0]
+    cf_class = int(np.argmax(y_cf))
+
+    if verbose:
+        print(f"InfoCELS: Final class {cf_class}, Target {target_class}, "
+              f"Success: {cf_class == target_class}, target_prob={target_prob:.4f}")
+
+    return cf_final.reshape(1, cf_final.shape[0], cf_final.shape[1]), y_cf
+
+
+####
 # M-CELS: Multivariate Counterfactual Explanations via Learned Saliency
 #
 # Extension of CELS for multivariate time series
