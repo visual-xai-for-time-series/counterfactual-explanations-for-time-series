@@ -2026,6 +2026,59 @@ print(result.valid, result.sparsity, result.substituted_components)
 
 ---
 
+#### 34. DiffCF - Generating Realistic Time-Series Counterfactuals via Diffusion-Guided Sampling (2026)
+**Implementation:** `cfts/cf_diffcf/diffcf.py`
+
+**Description:** Trains an unconditional denoising diffusion model (a 1-D UNet epsilon predictor) on the training distribution, then turns a query series into a counterfactual with an SDEdit-style guided reverse process: partially noise the query up to a chosen timestep instead of starting from pure noise, then DDIM-denoise it back to t=0 while nudging each step's denoised estimate with the gradient of a combined classification / proximity / smoothness objective. Retries with more noise and a stronger classification weight if the class doesn't flip.
+
+**Key Features:**
+- **Diffusion backbone**: a compact 1-D UNet (`UNet1D`) with sinusoidal time embeddings, trained with an MSE + total-variation denoising loss (`GaussianDiffusion`)
+- **SDEdit-style partial noising**: starts the reverse process from a noised version of the real query (`start_ratio` of the schedule) rather than pure noise, so the sampler repairs rather than invents
+- **Classifier guidance on x0**: at each DDIM step, nudges the denoised estimate with a weighted, unit-normalized combination of a classification gradient (log p(target|x0)), a proximity gradient (L1 to the original), and a smoothness gradient (second-derivative penalty)
+- **Guidance stabilization**: optional Gaussian-blurred gradient (`grad_smooth`) or multi-augmentation-averaged gradient (`aug_avg`) to reduce noisy per-step updates
+- **Retry loop**: on failure to flip the class, retries with a later `start_ratio` (more freedom to change) and a multiplicatively larger classification weight, up to `max_retries` times
+- **Bring-your-own-backbone**: `diffusion_model=`/`diffusion=`/`norm_stats=` accept a pre-trained `UNet1D`/`GaussianDiffusion` (e.g. from `train_diffcf_diffusion`, or the official repo's own classes directly — their forward/constructor signatures match), so a backbone can be trained once and reused, or shared with the official implementation for direct comparison
+
+**Reference:**
+```bibtex
+@misc{li2026diffcf,
+  title={Generating Realistic Time-Series Counterfactuals via Diffusion-Guided Sampling},
+  author={Li, Peiyu},
+  year={2026},
+  note={Accepted at ECML PKDD 2026. Author confirmed via the repository's LICENSE and commit history; a full author list and formal proceedings entry were not independently verifiable at time of writing.},
+  howpublished={\url{https://github.com/Luckilyeee/DiffCF}}
+}
+```
+
+**Links:**
+- Repository: [https://github.com/Luckilyeee/DiffCF](https://github.com/Luckilyeee/DiffCF/tree/main)
+- Comparison notebook: `cfts/cf_diffcf/diffcf_forda_comparison.ipynb` — trains one diffusion backbone with the official, unmodified `UNet1D`/`GaussianDiffusion` classes and feeds those exact weights into both the official `generate_counterfactual` and this repo's `diffcf_cf`, isolating the comparison to the sampling-loop port itself (plus a third run of `diffcf_cf` with its own default backbone, for typical usage). Also documents a one-line dead-import workaround needed to make the official repo importable at all (`src/cf/guidance.py` imports a `TemporalConeProjector` from a file that doesn't exist in the repo; it's never referenced anywhere, so the workaround doesn't affect what actually runs).
+
+**Usage Example:**
+```python
+from cfts.cf_diffcf.diffcf import diffcf_cf, train_diffcf_diffusion
+
+# Simplest path: trains its own (small, fast) diffusion model on `dataset`
+cf, scores = diffcf_cf(
+    sample=sample,
+    model=model,
+    dataset=dataset,
+    diffusion_epochs=300,
+    ddim_steps=100,
+    max_retries=3,
+    verbose=True,
+)
+
+# Pre-train once and reuse the backbone across many samples
+unet, diffusion, norm_stats = train_diffcf_diffusion(dataset, epochs=500)
+cf, scores = diffcf_cf(
+    sample=sample, model=model, target_class=1,
+    diffusion_model=unet, diffusion=diffusion, norm_stats=norm_stats,
+)
+```
+
+---
+
 ## Evaluation Metrics References
 
 ### Keane et al. (2021) Metrics Framework

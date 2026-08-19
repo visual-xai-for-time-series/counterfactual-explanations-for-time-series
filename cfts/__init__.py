@@ -16,6 +16,7 @@ Available Algorithms:
 - Confetti counterfactuals (cf_confetti)
 - CoUNTS counterfactuals (cf_counts)
 - DANDL counterfactuals (cf_dandl)
+- DiffCF counterfactuals (cf_diffcf)
 - DisCOX counterfactuals (cf_discox)
 - FASTPACE counterfactuals (cf_fastpace)
 - FFT-CF counterfactuals (cf_fft_cf)
@@ -52,11 +53,11 @@ from . import (
     cf_cfe4mts,
     cf_cfwot,
     cf_cgm,
-    cf_codec,
     cf_comte,
     cf_confetti,
     cf_counts,
     cf_dandl,
+    cf_diffcf,
     cf_discox,
     cf_fastpace,
     cf_fft_cf,
@@ -83,6 +84,14 @@ from . import (
     metrics,
 )
 
+try:
+    # cf_codec currently lives on the not-yet-merged `codec` branch; degrade
+    # gracefully rather than breaking every other algorithm's import when
+    # this branch doesn't have it yet.
+    from . import cf_codec
+except ImportError:
+    cf_codec = None
+
 __all__ = [
     "cf__abstract",
     "cf_ab_cf",
@@ -96,6 +105,7 @@ __all__ = [
     "cf_confetti",
     "cf_counts",
     "cf_dandl",
+    "cf_diffcf",
     "cf_discox",
     "cf_fastpace",
     "cf_fft_cf",
@@ -136,6 +146,7 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_confetti",
     "cf_counts",
     "cf_dandl",
+    "cf_diffcf",
     "cf_discox",
     "cf_fastpace",
     "cf_fft_cf",
