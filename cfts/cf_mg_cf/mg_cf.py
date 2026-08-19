@@ -98,12 +98,16 @@ def extract_shapelets(X_train, y_train, n_shapelets=100, lengths_ratio=[0.3, 0.5
     if verbose:
         print(f"MG-CF: Using window sizes: {window_sizes}")
     
-    # Apply Shapelet Transform to extract and rank shapelets by information gain
+    # Apply Shapelet Transform to extract and rank shapelets by information gain.
+    # ShapeletTransform's distance computation is brute-force and embarrassingly
+    # parallel across candidate shapelets; n_jobs=-1 uses all available cores
+    # instead of pyts's serial default, with no change to the result.
     st = ShapeletTransform(
         n_shapelets=n_shapelets,
         window_sizes=window_sizes,
         random_state=random_state,
-        sort=True  # Sort by information gain
+        sort=True,  # Sort by information gain
+        n_jobs=-1,
     )
     
     st.fit_transform(X_train, y_train)
@@ -239,7 +243,13 @@ def mg_cf_generate(sample, model, target_class=None, dataset=None,
     
     X_train = np.array(X_train)
     y_train = np.array(y_train)
-    
+
+    # Datasets that yield one-hot encoded labels (e.g. this repo's own
+    # TimeSeriesDataset) need collapsing to scalar class indices before
+    # they can be handed to pyts's ShapeletTransform, which requires 1D y.
+    if y_train.ndim > 1 and y_train.shape[1] > 1:
+        y_train = np.argmax(y_train, axis=1)
+
     if verbose:
         print(f"MG-CF: Loaded {len(X_train)} training samples, shape={X_train.shape}")
     
