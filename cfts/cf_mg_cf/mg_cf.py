@@ -35,15 +35,17 @@ import torch
 import torch.nn as nn
 from typing import Optional, Tuple, Dict, List
 from scipy.stats import entropy
-import warnings
 
-# Try to import pyts for shapelet transform
+# Try to import pyts for shapelet transform. This module is imported eagerly by
+# cfts/__init__.py alongside every other cf_* algorithm, so importing `cfts` at
+# all must not warn about a dependency other algorithms never touch. The actual,
+# actionable error is raised lazily below, only when MG-CF itself is invoked
+# without pyts installed.
 try:
     from pyts.transformation import ShapeletTransform
     HAS_PYTS = True
 except ImportError:
     HAS_PYTS = False
-    warnings.warn("pyts not available. Install with 'pip install pyts' for full MG-CF functionality.")
 
 
 def detach_to_numpy(data):

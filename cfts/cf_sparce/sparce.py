@@ -260,8 +260,15 @@ def sparce_gan_cf(sample,
     for epoch in range(num_epochs):
         # ============ Train Generator ============
         generator.train()
-        discriminator.eval()
-        
+        # NOTE: must stay in train(), not eval() -- gen_loss below backprops
+        # *through* the discriminator (adv_loss = bce(discriminator(cf), ...)),
+        # and cudnn's LSTM backward pass refuses to run through a forward
+        # that was executed in eval mode ("cudnn RNN backward can only be
+        # called in training mode"). Its own optimizer step only happens in
+        # the discriminator phase below, so leaving it in train() here does
+        # not affect its weights, only which code path the LSTM forward uses.
+        discriminator.train()
+
         gen_optimizer.zero_grad()
         
         # Generate residuals and create counterfactual

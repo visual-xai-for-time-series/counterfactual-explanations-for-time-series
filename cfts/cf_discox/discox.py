@@ -36,15 +36,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple, List, Dict, Union
-import warnings
 
-# Try to import stumpy for matrix profile computation
+# Try to import stumpy for matrix profile computation. This module is imported
+# eagerly by cfts/__init__.py alongside every other cf_* algorithm, so importing
+# `cfts` at all (e.g. just to use Wachter or Native-Guide) must not warn about a
+# dependency those algorithms never touch. The actual, actionable error is raised
+# lazily below, only when DisCOX itself is invoked without stumpy installed.
 try:
     import stumpy
     HAS_STUMPY = True
 except ImportError:
     HAS_STUMPY = False
-    warnings.warn("STUMPY not available. Install with 'pip install stumpy' for full DisCOX functionality.")
 
 
 def ind_list_to_intervals(lst):

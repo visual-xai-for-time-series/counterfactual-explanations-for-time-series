@@ -90,6 +90,11 @@ import cfts.cf_cem.cem as cem
 from cfts.cf_imfact.imfact import imfact_cf
 
 
+# Fixed seed so the query instance selected below (np.random.randint /
+# np.random.choice) is the same on every run, across all example_*.py
+# scripts, rather than a different random instance each time.
+np.random.seed(13)
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # ---------------------------------------------------------------------------

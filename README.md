@@ -108,7 +108,7 @@ The library includes a complete suite of metrics for evaluating counterfactual q
 - **`example_univariate_ecg.py`**: ECG200 electrocardiogram dataset (UCR Archive)
 - **`example_univariate_faultdetectiona.py`**: FaultDetectionA electromechanical drive dataset (3-class)
 - **`example_multivariate.py`**: Multi-channel spoken Arabic digits (13 channels)
-- **`example_metrics_evaluation.py`**: Comprehensive metrics evaluation across all 36 algorithm variants (TimeX and TimeX++ are excluded — they need external saliency-model infrastructure this repository doesn't provide)
+- **`example_metrics_evaluation.py`**: Comprehensive metrics evaluation across 53 algorithm variants — the base set plus additional variants of several methods (8 GLACIER bake-off variants, InfoCELS, NG-DBA, COMTE-Distractor, COMTE-Advanced-Gradient, Multi-SpaCE-Canonical, SPARCE-GAN, CGM-Simple) — including TimeX and TimeX++ (their own counterfactual reinterpretations — trained inline, per call, like every other trained method here; see `example_metrics_evaluation.py`'s module docstring for why, since both names collide with unrelated saliency/attribution papers that need external pre-trained-explainer infrastructure this repository doesn't provide). The combined metrics PNG is stamped with the dataset, model, and sample counts used.
 
 ### Supported Datasets
 - **UCR Time Series Archive**: Automatic download and preprocessing

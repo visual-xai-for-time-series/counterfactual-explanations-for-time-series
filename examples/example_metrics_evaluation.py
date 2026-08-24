@@ -7,26 +7,42 @@ counterfactual methods (Native Guide, COMTE, COMTE-TS, SETS, MOC, Wachter, GLACI
 Multi-SpaCE, Sub-SpaCE, TSEvo, LASTS, TSCF, FASTPACE, TIME-CF, SG-CF, MG-CF,
 Latent-CF, DiSCoX, CELS, FFT-CF, TERCE, AB-CF, CFWOT, CGM, COUNTS, SPARCE,
 CEM-PN, Abstract-CF, TS-Tweaking-kNN, TS-Tweaking-Irrev, TS-Tweaking-Rev, CFE4MTS,
-CONFETTI, MASCOTS, IMFACT) from the cfts package and evaluates them on the
-FordA dataset.
+CONFETTI, MASCOTS, IMFACT, TimeX, TimeX++) from the cfts package and evaluates
+them on the FordA dataset, plus additional variants of several of them:
+8 GLACIER bake-off variants (Glacier-{AE,NoAE}-{Unc,Loc,Glob,Unif}), InfoCELS,
+NG-DBA, COMTE-Distractor, COMTE-Advanced-Gradient, Multi-SpaCE-Canonical,
+SPARCE-GAN, and CGM-Simple — see the "Additional variants" comment in
+create_algorithm_wrappers() for what each adds over its already-listed
+counterpart and why a few other unwired variants (M-CELS, CEM-PP,
+confetti_package_cf, moc_cf_diverse, the *_fast reimplementations, and the
+11-strong FFT-CF variant family) were deliberately left out.
 
 Note: Sub-SpaCE is designed primarily for multivariate time series and may not work
 with univariate datasets like FordA. It will be skipped if incompatible.
 
-Not included: TimeX (cf_timex) requires a separately pre-trained saliency model
-that this repository has no training routine for, and produces an attribution
-map rather than a counterfactual time series; TimeX++ (cf_timex_plus_plus) has
-no implementation yet (module is a docstring stub). Both are skipped until
-that infrastructure exists.
+On "TimeX" and "TimeX++" here: both names collide with unrelated saliency/
+attribution papers that require a separately pre-trained explainer model this
+repository has no training routine for (see `cfts/cf_timex/timex.py` and the
+module docstring of `cfts/cf_timex_plus_plus/timex_plus_plus.py`). The
+algorithms evaluated below are instead this repository's own counterfactual
+reinterpretations that are trained inline, per call, like every other trained
+method here: `cfts.cf_timex.timex_cf.timex_cf` (a Wachter-style optimiser with
+a DTW class-prototype term, matching the "TimeX" method from the
+TS-Counterfactual-Explanation-Bake-off benchmark) and
+`cfts.cf_timex_plus_plus.timex_plus_plus.timexplusplus_cf` (TimeX++'s
+explanation-extractor + conditioner architecture, retargeted from label
+preservation to `target_class` — see that module's docstring for the full
+reasoning). Both produce an actual counterfactual time series, not an
+attribution map.
 
-All 36 algorithms are evaluated, but to keep it readable, metrics_combined.png
+All 53 algorithms are evaluated, but to keep it readable, metrics_combined.png
 (and the individual metrics_*.png / keane_*.png panels that feed into it) only
 plot the top 10, ranked by a composite score of validity, proximity, and realism.
 The complete, unfiltered results for every algorithm — including rank and
 whether it made the top 10 — are always written to metrics_full_results.csv.
 
 Features:
-- Real counterfactual algorithms evaluation (36 methods)
+- Real counterfactual algorithms evaluation (53 methods)
 - Comprehensive metrics across all categories
 - Keane et al. (2021) evaluation metrics (validity, proximity, compactness)
 - The single-function cfts.metrics.evaluate.evaluate_counterfactual() suite
@@ -44,6 +60,12 @@ Features:
 Evaluated instances are drawn from the training split (dataset_train) rather
 than the test split by default — see EVAL_SPLIT in main() to switch back to
 'test'. Algorithms use the same split as their NUN/reference pool.
+
+The instance selection itself (np.random.choice in main()) is seeded
+(np.random.seed(13), set once near the top of this module) so the same
+query instances are evaluated on every run — matching every other
+example_*.py script in this directory, each of which seeds its own
+single-instance np.random.randint selection the same way.
 """
 
 import os
@@ -101,6 +123,8 @@ import cfts.cf_comte.comte as comte
 import cfts.cf_sets.sets as sets
 import cfts.cf_dandl.dandl as dandl
 import cfts.cf_glacier.glacier as glacier
+import cfts.cf_glacier.glacier_reimp as glacier_reimp
+from cfts.cf_glacier.glacier_autoencoder import train_glacier_autoencoder, make_autoencoder_fns
 import cfts.cf_multispace.multispace as ms
 import cfts.cf_subspace.subspace as subspace
 import cfts.cf_tsevo.tsevo as tsevo
@@ -127,6 +151,8 @@ import cfts.cf_cfe4mts.cfe4mts as cfe4mts
 import cfts.cf_confetti.confetti as confetti
 import cfts.cf_mascots.mascots as mascots
 import cfts.cf_imfact.imfact as imfact
+from cfts.cf_timex.timex_cf import timex_cf
+from cfts.cf_timex_plus_plus.timex_plus_plus import timexplusplus_cf
 
 # Import metrics
 from cfts.metrics import (
@@ -146,6 +172,11 @@ from cfts.metrics.evaluate import evaluate_counterfactual
 # Set up plotting
 plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette("husl")
+
+# Fixed seed so the query instances selected below (np.random.choice) are
+# the same on every run, across all example_*.py scripts, rather than a
+# different random sample of instances each time.
+np.random.seed(13)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -571,6 +602,236 @@ def create_algorithm_wrappers(dataset, model):
         except Exception:
             return original_ts
 
+    def timex_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # Bake-off-style TimeX-CF (Wachter loss + DTW class-prototype term),
+            # not Harvard's saliency-based "TimeX" — see module docstring of
+            # cfts/cf_timex/timex_cf.py for the naming collision.
+            cf, _ = timex_cf(original_ts, model,
+                            target_class=target_class,
+                            dataset=dataset,
+                            max_samples=100,
+                            verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def timex_plus_plus_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # IB explanation extractor + conditioner, retargeted from label
+            # preservation to target_class — see module docstring of
+            # cfts/cf_timex_plus_plus/timex_plus_plus.py for the reasoning.
+            cf, _ = timexplusplus_cf(original_ts, model,
+                                    target_class=target_class,
+                                    dataset=dataset,
+                                    max_train_samples=100,
+                                    verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    # -----------------------------------------------------------------------
+    # Additional variants of already-represented methods.
+    #
+    # Each method above wires in exactly one algorithm/implementation; several
+    # of the underlying cfts modules ship more than one — a genuinely
+    # different technique or fidelity/speed tradeoff, not a legacy duplicate
+    # or a pure performance twin of one already wired above. Wired in here:
+    #
+    #   - GLACIER: the 8 bake-off-named variants (AE/NoAE crossed with 4
+    #     step-weight modes) from glacier_reimp.GLACIER_VARIANTS, alongside
+    #     the already-wired 'GLACIER' (a separate, older implementation in
+    #     glacier.py). The autoencoder and global step weights these need are
+    #     query-independent, so they're trained/computed once here rather
+    #     than per instance.
+    #   - InfoCELS (soft-mask CELS variant) alongside 'CELS'.
+    #   - NG-DBA (DTW-barycenter blending) alongside 'Native Guide' (NG-CAM).
+    #   - COMTE-Distractor (the real distractor-swap algorithm) and
+    #     COMTE-Advanced-Gradient (extra distance/constraint options)
+    #     alongside 'COMTE'/'COMTE-TS' (both gradient-based).
+    #   - Multi-SpaCE-Canonical (the paper's own two-stage NSGA-II search)
+    #     alongside 'Multi-SpaCE' (a speed-adapted approximation of it).
+    #   - SPARCE-GAN (adversarial architecture) alongside 'SPARCE'
+    #     (gradient-based).
+    #   - CGM-Simple (direct optimisation, no VAE) alongside 'CGM' (VAE-based).
+    #
+    # Deliberately NOT wired in:
+    #   - M-CELS: requires multivariate data; FordA is univariate (same
+    #     reason Sub-SpaCE's wrapper raises/skips above).
+    #   - CEM-PP: by cem_cf's own docstring, PP mode keeps the *original*
+    #     prediction and returns a delta, not x0+delta — it isn't a
+    #     counterfactual under this harness's validity-based evaluation.
+    #   - confetti_package_cf: wraps the official, external "confetti" pip
+    #     package, which isn't a dependency of this repo (see
+    #     confetti.py's own comment on why confetti_nsga_cf was picked as
+    #     the default over it).
+    #   - moc_cf_diverse: returns a list of diverse counterfactuals, not the
+    #     single (cf, scores) pair this harness evaluates per instance.
+    #   - subspace_fast / sg_cf_fast / time_cf_generate_fast / counts_cf_fast:
+    #     each is documented as a faster, (near-)equivalent reimplementation
+    #     of an already-wired method, not a different algorithm — wiring in
+    #     both would evaluate the same method twice.
+    #   - The FFT-CF family (11 more variants in cf_fft_cf/fft_cf.py) is
+    #     intentionally excluded — see example_metrics_evaluation.py's
+    #     module docstring.
+    # -----------------------------------------------------------------------
+
+    # --- GLACIER bake-off variants: shared, query-independent setup, done
+    # once here rather than per instance/per call. ---
+    glacier_autoencoder_fns = None
+    glacier_global_weights = None
+    try:
+        glacier_device = next(model.parameters()).device
+        X_glacier = np.asarray(dataset.X, dtype=np.float32)
+        # train_glacier_autoencoder's own default device (CUDA if available)
+        # can silently differ from `model`'s — force them to match, or the
+        # "-AE-" variants below crash with a cross-device tensor mismatch.
+        ae_model = train_glacier_autoencoder(
+            X_glacier, n_features=X_glacier.shape[1], n_epochs=30,
+            device=glacier_device, verbose=False,
+        )
+        glacier_autoencoder_fns = make_autoencoder_fns(ae_model)
+
+        def _glacier_predict_label(x_1d):
+            with torch.no_grad():
+                out = model(torch.from_numpy(np.asarray(x_1d, dtype=np.float32))
+                             .reshape(1, 1, -1).to(glacier_device))
+            return int(torch.argmax(out, dim=-1).item())
+
+        y_glacier = np.argmax(dataset.y, axis=1) if np.ndim(dataset.y) > 1 else np.asarray(dataset.y)
+        glacier_global_weights = glacier_reimp.compute_global_step_weights(
+            X_glacier.reshape(X_glacier.shape[0], -1), y_glacier,
+            _glacier_predict_label, X_glacier.shape[-1], max_samples=100,
+        )
+    except Exception as e:
+        print(f"  Warning: GLACIER variant setup (autoencoder/global weights) failed: {e}")
+
+    def _make_glacier_variant_wrapper(variant_name):
+        def _wrapper(original_ts, target_class=None, **kwargs):
+            try:
+                spec = glacier_reimp.GLACIER_VARIANTS[variant_name]
+                if spec['use_ae']:
+                    if glacier_autoencoder_fns is None:
+                        return original_ts  # AE setup failed above; skip rather than crash.
+                    ae_arg = glacier_autoencoder_fns
+                else:
+                    ae_arg = None
+                extra = {}
+                if spec['step_weights'] == 'global' and glacier_global_weights is not None:
+                    extra['precomputed_global_weights'] = glacier_global_weights
+                cf, _ = glacier_reimp.glacier_variant(
+                    variant_name, original_ts, model, autoencoder=ae_arg,
+                    dataset=dataset, target_label=target_class, max_iter=100,
+                    **extra,
+                )
+                if cf is None:
+                    return original_ts
+                # glacier_reimp always returns a flat (L,) array regardless
+                # of original_ts's own orientation/channel dim (unlike every
+                # other <name>_cf in this repo) — reshape back to match, or
+                # downstream model/metric calls silently misinterpret the
+                # channel axis as a batch axis.
+                return np.asarray(cf, dtype=np.float32).reshape(np.asarray(original_ts).shape)
+            except Exception:
+                return original_ts
+        return _wrapper
+
+    glacier_variant_wrappers = {
+        name: _make_glacier_variant_wrapper(name) for name in glacier_reimp.GLACIER_VARIANTS
+    }
+
+    def infocels_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            X_train = np.array([dataset[i][0] for i in range(min(100, len(dataset)))])
+            y_train = np.array([dataset[i][1] for i in range(min(100, len(dataset)))])
+            cf, _ = cels.infocels_generate(original_ts, model, X_train, y_train,
+                                          target_class=target_class,
+                                          max_iter=100,
+                                          verbose=False)
+            if cf is None:
+                return original_ts
+            # infocels_generate returns a batched (1, C, L) array, unlike
+            # original_ts's plain (C, L)/(L,) orientation — reshape back.
+            return np.asarray(cf, dtype=np.float32).reshape(np.asarray(original_ts).shape)
+        except Exception:
+            return original_ts
+
+    def ng_dba_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = ng.native_guide_dba_cf(original_ts, model,
+                                          target_class=target_class,
+                                          dataset=dataset,
+                                          max_samples=100,
+                                          verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def comte_distractor_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = comte.comte_cf(original_ts, model,
+                                  target_class=target_class,
+                                  dataset=dataset,
+                                  max_samples=100,
+                                  verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def comte_advanced_gradient_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # comte_cf_advanced_gradient() calls model.to(device) internally
+            # and, unlike every other method here, defaults device to
+            # 'cuda' whenever it's available rather than deriving it from
+            # `model` — silently moving the shared model out from under
+            # every other algorithm if it happened to be kept on a
+            # different device. Pin it explicitly to model's own device.
+            cf, _ = comte.comte_cf_advanced_gradient(original_ts, model,
+                                                     target_class=target_class,
+                                                     dataset=dataset,
+                                                     device=next(model.parameters()).device)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def multispace_canonical_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            # Paper's own two-stage NSGA-II search (see multispace_cf's
+            # docstring), scaled down from its defaults (population_size=100,
+            # grouped_iter=75, pruning_iter=25) to fit this harness's budget.
+            cf, _ = ms.multispace_cf(original_ts, model,
+                                    target_class=target_class,
+                                    dataset=dataset,
+                                    population_size=30,
+                                    grouped_iter=30,
+                                    pruning_iter=15,
+                                    verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def sparce_gan_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = sparce.sparce_gan_cf(original_ts, model,
+                                        target_class=target_class,
+                                        dataset=dataset,
+                                        num_epochs=50,
+                                        verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
+    def cgm_simple_wrapper(original_ts, target_class=None, **kwargs):
+        try:
+            cf, _ = cgm.cgm_generate_simple(original_ts, model,
+                                           target_class=target_class,
+                                           dataset=dataset,
+                                           max_iter=100,
+                                           verbose=False)
+            return cf if cf is not None else original_ts
+        except Exception:
+            return original_ts
+
     return {
         'Native Guide': native_guide_wrapper,
         'COMTE': comte_wrapper,
@@ -608,6 +869,16 @@ def create_algorithm_wrappers(dataset, model):
         'CONFETTI': confetti_wrapper,
         'MASCOTS': mascots_wrapper,
         'IMFACT': imfact_wrapper,
+        'TimeX': timex_wrapper,
+        'TimeX++': timex_plus_plus_wrapper,
+        **glacier_variant_wrappers,
+        'InfoCELS': infocels_wrapper,
+        'NG-DBA': ng_dba_wrapper,
+        'COMTE-Distractor': comte_distractor_wrapper,
+        'COMTE-Advanced-Gradient': comte_advanced_gradient_wrapper,
+        'Multi-SpaCE-Canonical': multispace_canonical_wrapper,
+        'SPARCE-GAN': sparce_gan_wrapper,
+        'CGM-Simple': cgm_simple_wrapper,
     }
 
 
@@ -803,6 +1074,52 @@ def rank_algorithms(summary_stats, algorithm_names,
             algorithm_scores[algorithm] = np.mean(scores)
 
     return sorted(algorithm_scores.items(), key=lambda x: x[1], reverse=True)
+
+
+def visualize_composite_scores(ranked_algorithms, output_dir='./', top_n=10):
+    """
+    Bar chart of the composite score (validity/proximity/realism blend from
+    rank_algorithms()) for the top-ranked algorithms — the single "who won
+    overall" panel that metrics_*.png / keane_*.png / evalpy_*.png (each one
+    metric at a time) don't show on their own.
+
+    Args:
+        ranked_algorithms: list of (algorithm_name, score) tuples, best
+            (highest score) first — the output of rank_algorithms().
+        output_dir: Directory to save the plot.
+        top_n: How many top-ranked algorithms to show.
+
+    Returns:
+        List containing the path to the saved plot (empty if there was
+        nothing to plot).
+    """
+    if not ranked_algorithms:
+        print("No ranked algorithms to visualize composite scores for!")
+        return []
+
+    top = ranked_algorithms[:top_n]
+    names = [name for name, _ in top]
+    scores = [score for _, score in top]
+    colors = plt.cm.Set2(np.linspace(0, 1, len(names)))
+
+    fig, ax = plt.subplots(figsize=(10, max(4, 0.45 * len(names))))
+    bars = ax.barh(names, scores, color=colors, alpha=0.8, edgecolor='black')
+    ax.set_xlabel('Composite Score', fontweight='bold', fontsize=11)
+    ax.set_title(f'Composite Score — Top {len(names)} Algorithms\n'
+                 '(validity + proximity + realism blend, Higher is Better)',
+                 fontweight='bold', fontsize=13)
+    ax.grid(True, alpha=0.3, axis='x')
+
+    x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+    for i, (bar, val) in enumerate(zip(bars, scores)):
+        ax.text(val + 0.02 * x_range, i, f'{val:.3f}', va='center', fontsize=9)
+
+    plt.tight_layout()
+    fpath = os.path.join(output_dir, 'composite_scores.png')
+    plt.savefig(fpath, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    plt.close()
+    print(f"\nComposite score plot saved as: {fpath}")
+    return [fpath]
 
 
 def create_results_visualization(df, output_dir='./', top_algorithms=None):
@@ -1270,7 +1587,7 @@ def visualize_full_metrics(df_full, output_dir='./', top_algorithms=None):
     return output_filenames
 
 
-def combine_png_files(file_list, output_path, delete_individual=True):
+def combine_png_files(file_list, output_path, delete_individual=True, header_lines=None):
     """
     Stack a list of PNG files vertically into a single combined image.
 
@@ -1283,11 +1600,14 @@ def combine_png_files(file_list, output_path, delete_individual=True):
         output_path       : path for the output PNG
         delete_individual : if True (default), delete source files after
                             the combined image is successfully written
+        header_lines      : optional list of strings to render as a banner
+                            above all panels (e.g. dataset/model/sample-size
+                            provenance) — one line per string, centered.
 
     Returns:
         output_path if successful, else None
     """
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageFont
 
     existing = [p for p in file_list if p and os.path.exists(p)]
     if not existing:
@@ -1299,8 +1619,36 @@ def combine_png_files(file_list, output_path, delete_individual=True):
     sep     = 6   # pixels between panels
     total_h = sum(img.height for img in images) + sep * (len(images) - 1)
 
-    canvas = Image.new('RGB', (max_w, total_h), color=(255, 255, 255))
-    y_off  = 0
+    # Optional provenance banner (dataset / model / sample counts) rendered
+    # above the stacked panels.
+    header_h = 0
+    font = None
+    line_h = 0
+    if header_lines:
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 72)
+        except OSError:
+            try:
+                font = ImageFont.load_default(size=72)  # Pillow >= 9.2
+            except TypeError:
+                font = ImageFont.load_default()  # older Pillow: fixed small bitmap font
+        line_h = font.getbbox("Ag")[3] - font.getbbox("Ag")[1] + 24
+        header_h = line_h * len(header_lines) + 40  # 20px top/bottom padding
+        # Widen the canvas if the header text is wider than every panel —
+        # otherwise long provenance lines get clipped at the right edge.
+        text_w = max(font.getbbox(line)[2] for line in header_lines)
+        max_w = max(max_w, text_w + 64)
+
+    canvas = Image.new('RGB', (max_w, header_h + total_h), color=(255, 255, 255))
+    if header_lines:
+        draw = ImageDraw.Draw(canvas)
+        for i, line in enumerate(header_lines):
+            line_w = font.getbbox(line)[2]
+            x = max(0, (max_w - line_w) // 2)
+            draw.text((x, 20 + i * line_h), line, fill=(30, 30, 30), font=font)
+        draw.line([(0, header_h - 1), (max_w, header_h - 1)], fill=(180, 180, 180), width=2)
+
+    y_off  = header_h
     for i, img in enumerate(images):
         # Pad narrower images with white on the right
         if img.width < max_w:
@@ -1466,7 +1814,7 @@ def main():
     print(f"✓ {len(algorithms)} algorithms prepared")
 
     # Select instances (diverse examples) from the chosen split
-    n_instances = 3  # Evaluate on 3 instances
+    n_instances = 10  # Evaluate on 10 instances
     instance_indices = np.random.choice(len(eval_dataset.X), n_instances, replace=False)
 
     print(f"\n=== Evaluating {n_instances} {EVAL_SPLIT} instances ===")
@@ -1516,6 +1864,10 @@ def main():
             print(f"\n✓ Ranked {len(ranked_algorithms)} algorithms; "
                   f"plotting the top {len(top_algorithms)} in metrics_combined.png")
 
+        # Composite-score bar chart — the overall "who won" ranking, shown
+        # before the per-metric-category breakdowns below.
+        composite_filenames = visualize_composite_scores(ranked_algorithms, top_n=TOP_N)
+
         # Create metrics visualization (only top_algorithms are plotted, but
         # summary_stats is still computed over ALL algorithms internally)
         output_filenames, summary_stats = create_results_visualization(df, top_algorithms=top_algorithms)
@@ -1540,9 +1892,22 @@ def main():
         if df_evalpy is not None:
             evalpy_filenames = visualize_full_metrics(df_evalpy, top_algorithms=top_algorithms)
 
-        # Combine all metric plots into one image
-        all_plot_files = list(output_filenames) + list(keane_filenames) + list(evalpy_filenames)
-        combine_png_files(all_plot_files, os.path.join('./', 'metrics_combined.png'))
+        # Combine all metric plots into one image, with a provenance banner
+        # (dataset, model, and sample-count context) at the top.
+        all_plot_files = (list(composite_filenames) + list(output_filenames)
+                          + list(keane_filenames) + list(evalpy_filenames))
+        header_lines = [
+            f"Dataset: {getattr(eval_dataset, 'name', 'unknown')}  "
+            f"({EVAL_SPLIT} split, {len(eval_dataset.X)} instances available)",
+            f"Model: {type(model).__name__}",
+            f"Query instances evaluated: {len(valid_results)}  |  "
+            f"Reference/training samples used: {len(reference_data)}",
+        ]
+        if ranked_algorithms:
+            top_name, top_score = ranked_algorithms[0]
+            header_lines.append(f"Top algorithm: {top_name}  (composite score: {top_score:.3f})")
+        combine_png_files(all_plot_files, os.path.join('./', 'metrics_combined.png'),
+                           header_lines=header_lines)
 
         # Collect algorithm runtimes (all algorithms, every attempt — successes,
         # failures, and timeouts alike).
@@ -1585,7 +1950,8 @@ def main():
     print("\n=== Evaluation Complete ===")
     print(f"Evaluated on the '{EVAL_SPLIT}' split.")
     print("Generated outputs:")
-    print(f"  - metrics_combined.png  (top {TOP_N} algorithms' metrics, Keane, and evaluate.py panels in one file)")
+    print(f"  - metrics_combined.png  (top {TOP_N} algorithms' composite score, metrics, Keane, and evaluate.py panels in one file)")
+    print("  - composite_scores.png (composite score ranking, top algorithms)")
     print("  - metrics_validity.png (validity metric comparisons, top algorithms)")
     print("  - metrics_proximity.png (proximity metric comparisons, top algorithms)")
     print("  - metrics_sparsity.png (sparsity metric comparisons, top algorithms)")

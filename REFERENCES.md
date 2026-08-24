@@ -1960,12 +1960,26 @@ saliency, prediction = timex_explanation(
 )
 ```
 
+**Naming collision — the counterfactual "TimeX" used in `example_metrics_evaluation.py`:**
+`example_metrics_evaluation.py` evaluates a *different* method also called "TimeX", implemented in `cfts/cf_timex/timex_cf.py::timex_cf`. That one is a Wachter-style gradient optimiser with an added DTW class-prototype term, matching the "TimeX" method from the TS-Counterfactual-Explanation-Bake-off benchmark (companion code to "Counterfactual Explanation Bake-off: A Review and Experimental Evaluation for Time Series Classification", Machine Learning Journal 2026) — an unrelated paper that happens to share the name. It requires no pre-training (it optimises per query, like the rest of this repository's Wachter-family methods) and produces an actual counterfactual time series, not a saliency map. See `timex_cf.py`'s module docstring for the full naming-collision discussion.
+
+```python
+from cfts.cf_timex.timex_cf import timex_cf
+
+cf, prediction = timex_cf(
+    sample=sample,
+    model=model,
+    target_class=1,
+    dataset=dataset,
+)
+```
+
 ---
 
 #### 32. TimeX++ - Learning Time-Series Explanations with Information Bottleneck (2024)
 **Implementation:** `cfts/cf_timex_plus_plus/timex_plus_plus.py`
 
-**Status: not yet implemented.** The file currently contains only the method description below as comments — no `timexplusplus_explanation` function exists yet, so the usage example is aspirational (documents the intended interface, not a working call).
+**Status: implemented as a counterfactual reinterpretation, not the original explainer.** `timexplusplus_explanation` (returning a pure saliency mask, as sketched below) still does not exist. What's implemented instead is `timexplusplus_cf`, which keeps the paper's extractor/conditioner architecture and objective (mask extraction, compactness quantifier, Gaussian-padded reference instance, MLP conditioner) but retargets the label-consistency term from *preserving* the query's own predicted class to *flipping* to a given `target_class`, so the result fits this repository's `<name>_cf(sample, model, target_class, dataset, ...) -> (counterfactual, scores)` contract used by every other method (and by `example_metrics_evaluation.py`). See the module's docstring for the full reasoning, the resulting simplifications (moment-matching approximation of the distribution-shift KL term, per-call training discarded after one counterfactual, defaults retuned so validity isn't dominated by the compactness/distribution terms), and `timexplusplus_fit` / `timexplusplus_generate` for reusing one trained extractor/conditioner pair across several queries that share a target class.
 
 **Description:** Improved time series explainer based on information bottleneck principle that generates in-distributed and label-preserving explanation instances. Addresses distribution shift and signaling issues in applying IB to time series explainability.
 
@@ -2002,17 +2016,28 @@ saliency, prediction = timex_explanation(
 
 **Usage Example:**
 ```python
-from cfts.cf_timex_plus_plus.timex_plus_plus import timexplusplus_explanation
+from cfts.cf_timex_plus_plus.timex_plus_plus import timexplusplus_cf
 
-# Note: Requires training TimeX++ explanation extractor and conditioner
-saliency_mask, embedded_instance, prediction = timexplusplus_explanation(
+# Trains a fresh explanation extractor + conditioner on `dataset`, targeting
+# target_class, then generates a counterfactual for `sample` with one
+# forward pass. alpha/beta/r/epochs default to values retuned for reliable
+# validity (see the module docstring) rather than the paper's own weighting.
+cf, prediction = timexplusplus_cf(
     sample=sample,
     model=model,
+    target_class=1,
     dataset=training_data,
-    alpha=2.0,  # Compactness weight
-    beta=1.0,   # Distribution consistency weight
+    alpha=0.5,  # Compactness weight
+    beta=0.25,  # Distribution consistency weight
     r=0.5,      # Mask sparsity parameter
-    epochs=50
+    epochs=80,
+)
+
+# Pass return_mask=True for a 3-tuple (cf, prediction, mask), the closest
+# thing to the original paper's saliency output:
+cf, prediction, mask = timexplusplus_cf(
+    sample=sample, model=model, target_class=1, dataset=training_data,
+    return_mask=True,
 )
 ```
 
