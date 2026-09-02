@@ -629,8 +629,36 @@ def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     if C > 1:
         ax.legend([f'channel:{i}' for i in range(C)], loc='upper right', fontsize='small')
 
-n_rows = 25  # 1 original + 12 individual CFs + 12 overlays
-fig, axs = plt.subplots(n_rows, figsize=(10, 1.75 * n_rows))
+# Collect (name, cf_pl, pred_str, success) for every method attempted, then
+# keep only the ones that actually produced a valid counterfactual. success
+# == True implies cf_*_pl is not None too (the try/except blocks above always
+# set both cf_x and prediction_x to None together on failure) — a method
+# that errored out, or ran but never reached target_class, isn't a
+# counterfactual to show, so it's excluded here rather than plotted with a
+# [FAILED] marker.
+methods_info = [
+    ('Native Guide',    cf_ng_pl,        pred_ng_str,        success_ng),
+    ('COMTE',           cf_comte_pl,     pred_comte_str,     success_comte),
+    ('SETS',            cf_sets_pl,      pred_sets_str,      success_sets),
+    ('Wachter Genetic', cf_w_pl,         pred_w_str,         success_w),
+    ('GLACIER',         cf_glacier_pl,   pred_glacier_str,   success_glacier),
+    ('Sub-SpaCE',       cf_subspace_pl,  pred_subspace_str,  success_subspace),
+    ('TSEvo',           cf_tsevo_pl,     pred_tsevo_str,     success_tsevo),
+    ('MG-CF',           cf_mg_cf_pl,     pred_mg_cf_str,     success_mg_cf),
+    ('Latent-CF',       cf_latent_cf_pl, pred_latent_cf_str, success_latent_cf),
+    ('CELS',            cf_cels_pl,      pred_cels_str,      success_cels),
+    ('TERCE',           cf_terce_pl,     pred_terce_str,     success_terce),
+    ('CEM',             cf_cem_pl,       pred_cem_str,       success_cem),
+]
+included_methods = [(name, cf_pl, pred_str) for name, cf_pl, pred_str, success in methods_info if success]
+excluded_names = [name for name, _, _, success in methods_info if not success]
+if excluded_names:
+    print(f"Excluded {len(excluded_names)} method(s) that didn't produce a valid "
+          f"counterfactual (no result, or wrong predicted class): {excluded_names}")
+
+n_rows = 1 + 2 * len(included_methods)  # original + one individual plot + one overlay per included method
+fig, axs = plt.subplots(n_rows, figsize=(10, 1.75 * n_rows), squeeze=False)
+axs = axs.flatten()
 fig.suptitle('Counterfactual Explanations - ECG200', y=0.998, fontsize=14)
 
 i = 0
@@ -640,126 +668,21 @@ true_label_str = f"Class {true_class_idx}"
 plot_channels(axs[i], sample_pl, f'Original sample — true: {true_label_str}, pred: {pred_original_str}', styles=[{'color': 'blue'}])
 i += 1
 
-# Individual counterfactual plots
-if cf_ng_pl is not None:
-    status = '✓' if success_ng else '✗'
-    plot_channels(axs[i], cf_ng_pl, f'Native Guide [{status}] — pred: {pred_ng_str}')
-else:
-    axs[i].set_title('Native Guide [✗ FAILED]')
-i += 1
+# Individual counterfactual plots (successful methods only)
+for name, cf_pl, pred_str in included_methods:
+    plot_channels(axs[i], cf_pl, f'{name} [✓] — pred: {pred_str}')
+    i += 1
 
-if cf_comte_pl is not None:
-    status = '✓' if success_comte else '✗'
-    plot_channels(axs[i], cf_comte_pl, f'COMTE [{status}] — pred: {pred_comte_str}')
-else:
-    axs[i].set_title('COMTE [✗ FAILED]')
-i += 1
-
-if cf_sets_pl is not None:
-    status = '✓' if success_sets else '✗'
-    plot_channels(axs[i], cf_sets_pl, f'SETS [{status}] — pred: {pred_sets_str}')
-else:
-    axs[i].set_title('SETS [✗ FAILED]')
-i += 1
-
-if cf_w_pl is not None:
-    status = '✓' if success_w else '✗'
-    plot_channels(axs[i], cf_w_pl, f'Wachter Genetic [{status}] — pred: {pred_w_str}')
-else:
-    axs[i].set_title('Wachter Genetic [✗ FAILED]')
-i += 1
-
-if cf_glacier_pl is not None:
-    status = '✓' if success_glacier else '✗'
-    plot_channels(axs[i], cf_glacier_pl, f'GLACIER [{status}] — pred: {pred_glacier_str}')
-else:
-    axs[i].set_title('GLACIER [✗ FAILED]')
-i += 1
-
-if cf_subspace_pl is not None:
-    status = '✓' if success_subspace else '✗'
-    plot_channels(axs[i], cf_subspace_pl, f'Sub-SpaCE [{status}] — pred: {pred_subspace_str}')
-else:
-    axs[i].set_title('Sub-SpaCE [✗ FAILED]')
-i += 1
-
-if cf_tsevo_pl is not None:
-    status = '✓' if success_tsevo else '✗'
-    plot_channels(axs[i], cf_tsevo_pl, f'TSEvo [{status}] — pred: {pred_tsevo_str}')
-else:
-    axs[i].set_title('TSEvo [✗ FAILED]')
-i += 1
-
-if cf_mg_cf_pl is not None:
-    status = '✓' if success_mg_cf else '✗'
-    plot_channels(axs[i], cf_mg_cf_pl, f'MG-CF [{status}] — pred: {pred_mg_cf_str}')
-else:
-    axs[i].set_title('MG-CF [✗ FAILED]')
-i += 1
-
-if cf_latent_cf_pl is not None:
-    status = '✓' if success_latent_cf else '✗'
-    plot_channels(axs[i], cf_latent_cf_pl, f'Latent-CF [{status}] — pred: {pred_latent_cf_str}')
-else:
-    axs[i].set_title('Latent-CF [✗ FAILED]')
-i += 1
-
-if cf_cels_pl is not None:
-    status = '✓' if success_cels else '✗'
-    plot_channels(axs[i], cf_cels_pl, f'CELS [{status}] — pred: {pred_cels_str}')
-else:
-    axs[i].set_title('CELS [✗ FAILED]')
-i += 1
-
-if cf_terce_pl is not None:
-    status = '✓' if success_terce else '✗'
-    plot_channels(axs[i], cf_terce_pl, f'TERCE [{status}] — pred: {pred_terce_str}')
-else:
-    axs[i].set_title('TERCE [✗ FAILED]')
-i += 1
-
-if cf_cem_pl is not None:
-    status = '✓' if success_cem else '✗'
-    plot_channels(axs[i], cf_cem_pl, f'CEM [{status}] — pred: {pred_cem_str}')
-else:
-    axs[i].set_title('CEM [✗ FAILED]')
-i += 1
-
-# overlay plots: counterfactual vs original
-def overlay(ax, base, other, title, pred_str=None, is_success=False):
-    if other is None:
-        ax.set_title(f'{title} [✗ FAILED]')
-        return
-    # include prediction in overlay title if provided
-    status = '✓' if is_success else '✗'
-    t = f"{title} [{status}] — pred: {pred_str}" if pred_str else f"{title} [{status}]"
-    ax.set_title(t)
+# overlay plots: counterfactual vs original (successful methods only)
+def overlay(ax, base, other, title, pred_str=None):
     plot_channels(ax, base, title=None, styles=[{'linestyle': '--', 'color': 'blue'} for _ in range(base.shape[0])], alpha=0.6)
     plot_channels(ax, other, title=None, styles=[{'linewidth': 1.2} for _ in range(other.shape[0])], alpha=0.9)
+    ax.set_title(f"{title} [✓] — pred: {pred_str}" if pred_str else f"{title} [✓]")
 
-overlay(axs[i], sample_pl, cf_ng_pl, 'Native Guide vs Original', pred_ng_str, success_ng)
-i += 1
-overlay(axs[i], sample_pl, cf_comte_pl, 'COMTE vs Original', pred_comte_str, success_comte)
-i += 1
-overlay(axs[i], sample_pl, cf_sets_pl, 'SETS vs Original', pred_sets_str, success_sets)
-i += 1
-overlay(axs[i], sample_pl, cf_w_pl, 'Wachter Genetic vs Original', pred_w_str, success_w)
-i += 1
-overlay(axs[i], sample_pl, cf_glacier_pl, 'GLACIER vs Original', pred_glacier_str, success_glacier)
-i += 1
-overlay(axs[i], sample_pl, cf_subspace_pl, 'Sub-SpaCE vs Original', pred_subspace_str, success_subspace)
-i += 1
-overlay(axs[i], sample_pl, cf_tsevo_pl, 'TSEvo vs Original', pred_tsevo_str, success_tsevo)
-i += 1
-overlay(axs[i], sample_pl, cf_mg_cf_pl, 'MG-CF vs Original', pred_mg_cf_str, success_mg_cf)
-i += 1
-overlay(axs[i], sample_pl, cf_latent_cf_pl, 'Latent-CF vs Original', pred_latent_cf_str, success_latent_cf)
-i += 1
-overlay(axs[i], sample_pl, cf_cels_pl, 'CELS vs Original', pred_cels_str, success_cels)
-i += 1
-overlay(axs[i], sample_pl, cf_terce_pl, 'TERCE vs Original', pred_terce_str, success_terce)
-i += 1
-overlay(axs[i], sample_pl, cf_cem_pl, 'CEM vs Original', pred_cem_str, success_cem)
+for name, cf_pl, pred_str in included_methods:
+    overlay(axs[i], sample_pl, cf_pl, f'{name} vs Original', pred_str)
+    i += 1
+
 plt.tight_layout(rect=[0, 0.01, 1, 0.999])
 plt.savefig('counterfactuals_ecg200.png')
 print("\nPlot saved to 'counterfactuals_ecg200.png'. Exiting without displaying.")

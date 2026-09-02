@@ -17,17 +17,19 @@ stumpy >= 1.12.0
 pyts >= 0.12.0
 tslearn >= 0.6.3
 fastdtw >= 0.3.4
-distancia >= 0.0.85
 
 # For UMAP-based projection plots in the IMFACT ablation
 umap-learn >= 0.5.6
 
-# For EMD-based IMF decomposition in IMFACT (optional decomposer="emd")
-emd-signal >= 0.6.0
+# For EMD-based IMF decomposition in IMFACT (optional decomposer="emd").
+# This is the "emd" package (emd.sift.sift) — NOT the unrelated
+# "EMD-signal"/PyEMD package, which has a different, incompatible API.
+emd >= 0.6.0
 
-# For CoDec's decomposition strategies (cfts/cf_codec/, see its own
-# requirements.txt for a scoped-down subset): wavelet, STL, and changepoint
-# decomposers; emd-signal above covers decomposition="emd".
+# For the wavelet decomposition path in FFT-CF (cfts/cf_fft_cf/fft_cf.py)
 PyWavelets >= 1.8.0
-statsmodels >= 0.14.6
-ruptures >= 1.1.10
+
+# For MASCOTS' BoRF pipeline (cfts/cf_mascots/_fast_borf.py); required to
+# run mascots_cf, not just to import cfts.
+sparse == 0.19.2
+numba == 0.61.2

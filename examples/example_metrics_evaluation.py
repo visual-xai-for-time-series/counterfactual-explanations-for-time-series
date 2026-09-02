@@ -66,12 +66,21 @@ The instance selection itself (np.random.choice in main()) is seeded
 query instances are evaluated on every run — matching every other
 example_*.py script in this directory, each of which seeds its own
 single-instance np.random.randint selection the same way.
+
+Checkpointing: each instance's result is pickled to metrics_checkpoint.pkl
+right after it finishes, so a run killed partway through (e.g. by an
+external timeout) can resume from the last completed instance on its next
+invocation instead of redoing the whole ~3h13m-3h20m, 10-instance sweep from
+scratch. See CHECKPOINT_PATH / RESUME_FROM_CHECKPOINT below. The checkpoint
+file is removed once every instance completes; set METRICS_EVAL_RESUME=0 to
+disable resuming and always start fresh.
 """
 
 import os
 import sys
 import signal
 import time
+import pickle
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -162,7 +171,7 @@ from cfts.metrics import (
 )
 
 # Import Keane et al. (2021) metrics
-from cfts.metrics.keane import validity, proximity, compactness, evaluate_keane_metrics
+from cfts.metrics.keane import keane_validity, keane_proximity, keane_compactness, keane_evaluate_metrics
 
 # Import the single-function evaluate.py metric suite (validity, proximity,
 # sparsity, realism computed together) — the same function used by the
@@ -182,6 +191,96 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Per-algorithm timeout (seconds). SIGALRM interrupts blocking C/Python code.
 PER_ALGO_TIMEOUT = 180
+
+# Runtime handicap for rank_algorithms()'s composite score: the seconds of
+# mean per-instance runtime at which an algorithm's score is discounted to
+# half. See rank_algorithms()'s docstring for the full formula — a fast
+# algorithm keeps ~its full score, a slow one (approaching PER_ALGO_TIMEOUT)
+# is discounted hard, so two algorithms with similar validity/proximity/
+# realism no longer rank identically regardless of how long one takes.
+RUNTIME_HANDICAP_SCALE = 30.0
+
+# ---------------------------------------------------------------------------
+# Incremental checkpointing.
+#
+# The 10-instance x 53-algorithm sweep in main() takes ~19-20 min/instance
+# (~3h13m-3h20m total) — long enough that an external kill (e.g. run_all.py's
+# per-script timeout, or a machine restart) previously discarded every
+# already-completed instance, since results were only written to disk after
+# ALL n_instances finished. Each instance's result is now pickled to
+# CHECKPOINT_PATH right after it completes; on the next run, any instance
+# already present there is loaded instead of recomputed, so the sweep just
+# continues where it left off. Set METRICS_EVAL_RESUME=0 in the environment
+# (or delete the checkpoint file) to force a clean run from scratch.
+# ---------------------------------------------------------------------------
+CHECKPOINT_PATH = os.path.join('./', 'metrics_checkpoint.pkl')
+RESUME_FROM_CHECKPOINT = os.environ.get('METRICS_EVAL_RESUME', '1') != '0'
+
+# ---------------------------------------------------------------------------
+# Fastest-methods, larger-sample sweep.
+#
+# select_fastest_algorithms() / run_fastest_methods_sweep() (near the bottom
+# of this file, just above main()) take just the N quickest-running
+# algorithms from a completed main() run's metrics_full_results.csv and
+# re-evaluate *only* those across a much larger sample of instances (100 by
+# default, vs. main()'s 10) — feasible specifically because the slow
+# algorithms that make the full 53-algorithm sweep take ~3h13m-3h20m have
+# already been dropped, so 100 instances of just the fast ones costs a small
+# fraction of that. Opt-in, not part of the default run: invoke with
+# `python example_metrics_evaluation.py --fast-sweep` (see the __main__
+# guard at the bottom of this file) after a normal run has produced
+# metrics_full_results.csv.
+# ---------------------------------------------------------------------------
+N_FASTEST_FOR_LARGE_SWEEP = 10
+LARGE_SWEEP_N_INSTANCES = 100
+FAST_SWEEP_CHECKPOINT_PATH = os.path.join('./', 'metrics_fast_sweep_checkpoint.pkl')
+FAST_SWEEP_OUTPUT_DIR = os.path.join('./', 'fast_sweep_outputs')
+
+
+def _save_checkpoint(path, instance_signature, completed):
+    """Atomically persist per-instance results computed so far.
+
+    Args:
+        path: checkpoint file path.
+        instance_signature: list of plain-int instance indices (the full
+            instance_indices selection for this run), used on resume to
+            confirm a found checkpoint matches the current seed/n_instances.
+        completed: dict mapping position-in-instance_signature -> a dict
+            with 'original_ts', 'target_class', and 'result' (the same
+            structure evaluate_single_instance() returns).
+    """
+    tmp_path = f'{path}.tmp'
+    with open(tmp_path, 'wb') as f:
+        pickle.dump(
+            {'instance_signature': instance_signature, 'completed': completed}, f
+        )
+    os.replace(tmp_path, path)  # atomic on POSIX: never leaves a half-written file
+
+
+def _load_checkpoint(path, instance_signature):
+    """Load a checkpoint if present and it matches the current run's instance selection.
+
+    Returns the {position: {...}} 'completed' dict (possibly empty).
+    """
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'rb') as f:
+            checkpoint = pickle.load(f)
+    except Exception as e:
+        print(f"⚠ Could not read checkpoint ({e}); starting fresh")
+        return {}
+
+    if checkpoint.get('instance_signature') != instance_signature:
+        print("⚠ Checkpoint's instance selection doesn't match this run "
+              "(different seed/n_instances?) — ignoring it")
+        return {}
+
+    completed = checkpoint.get('completed', {})
+    if completed:
+        print(f"✓ Resuming from checkpoint: {len(completed)}/{len(instance_signature)} "
+              f"instance(s) already evaluated ({path})")
+    return completed
 
 
 def load_forda_data_and_model():
@@ -1047,11 +1146,30 @@ def compute_metrics_dataframe(all_results):
 
 
 def rank_algorithms(summary_stats, algorithm_names,
-                     key_metrics=('prediction_change', 'normalized_distance', 'temporal_consistency')):
+                     key_metrics=('prediction_change', 'normalized_distance', 'temporal_consistency'),
+                     runtime_by_algorithm=None, runtime_scale=RUNTIME_HANDICAP_SCALE):
     """
     Rank algorithms by a composite score combining validity (prediction_change),
     proximity (inverted normalized_distance, since lower is better), and realism
     (temporal_consistency).
+
+    Args:
+        summary_stats, algorithm_names, key_metrics: as before — the
+            (Algorithm, Metric) -> mean/std/median table and the metrics to
+            blend for the base validity/proximity/realism score.
+        runtime_by_algorithm: optional {algorithm_name: mean_runtime_seconds}
+            dict (e.g. df_runtime.groupby('Algorithm')['Runtime'].mean(),
+            from compute_runtime_dataframe() — every attempt, not just
+            successes). When given, the base score is multiplied by a
+            runtime handicap: 1 / (1 + mean_runtime / runtime_scale). A
+            near-instant algorithm keeps almost its full score (handicap≈1);
+            one averaging runtime_scale seconds is discounted to ~0.5; one
+            averaging PER_ALGO_TIMEOUT (i.e. it mostly timed out) is
+            discounted hard (~0.14 at the default scale). An algorithm
+            absent from runtime_by_algorithm (no recorded attempts) gets no
+            handicap (factor 1.0) rather than being penalized for a data gap.
+        runtime_scale: seconds at which the handicap reaches 0.5 (default
+            RUNTIME_HANDICAP_SCALE).
 
     Returns a list of (algorithm_name, score) tuples, best (highest score) first.
     """
@@ -1071,17 +1189,23 @@ def rank_algorithms(summary_stats, algorithm_names,
                 continue
 
         if scores:
-            algorithm_scores[algorithm] = np.mean(scores)
+            composite = np.mean(scores)
+            if runtime_by_algorithm is not None and algorithm in runtime_by_algorithm:
+                mean_runtime = runtime_by_algorithm[algorithm]
+                runtime_handicap = 1.0 / (1.0 + mean_runtime / runtime_scale)
+                composite *= runtime_handicap
+            algorithm_scores[algorithm] = composite
 
     return sorted(algorithm_scores.items(), key=lambda x: x[1], reverse=True)
 
 
 def visualize_composite_scores(ranked_algorithms, output_dir='./', top_n=10):
     """
-    Bar chart of the composite score (validity/proximity/realism blend from
-    rank_algorithms()) for the top-ranked algorithms — the single "who won
-    overall" panel that metrics_*.png / keane_*.png / evalpy_*.png (each one
-    metric at a time) don't show on their own.
+    Bar chart of the composite score (validity/proximity/realism blend,
+    discounted by a runtime handicap, from rank_algorithms()) for the
+    top-ranked algorithms — the single "who won overall" panel that
+    metrics_*.png / keane_*.png / evalpy_*.png (each one metric at a time)
+    don't show on their own.
 
     Args:
         ranked_algorithms: list of (algorithm_name, score) tuples, best
@@ -1106,7 +1230,7 @@ def visualize_composite_scores(ranked_algorithms, output_dir='./', top_n=10):
     bars = ax.barh(names, scores, color=colors, alpha=0.8, edgecolor='black')
     ax.set_xlabel('Composite Score', fontweight='bold', fontsize=11)
     ax.set_title(f'Composite Score — Top {len(names)} Algorithms\n'
-                 '(validity + proximity + realism blend, Higher is Better)',
+                 '(validity + proximity + realism blend, runtime-handicapped, Higher is Better)',
                  fontweight='bold', fontsize=13)
     ax.grid(True, alpha=0.3, axis='x')
 
@@ -1342,15 +1466,15 @@ def evaluate_keane_metrics_batch(original_ts_list, all_results, model_wrapper, t
         # Calculate Keane metrics
         try:
             # 1. Validity
-            val_score = validity(originals, counterfactuals, model_wrapper, target_classes=targets)
+            val_score = keane_validity(originals, counterfactuals, model_wrapper, target_classes=targets)
             print(f"  ✓ Validity: {val_score:.2%} (fraction achieving target class)")
-            
+
             # 2. Proximity
-            prox_score = proximity(originals, counterfactuals)
+            prox_score = keane_proximity(originals, counterfactuals)
             print(f"  ✓ Proximity: {prox_score:.4f} (average L2 distance)")
-            
+
             # 3. Compactness
-            comp_score = compactness(originals, counterfactuals, tolerance=0.01)
+            comp_score = keane_compactness(originals, counterfactuals, tolerance=0.01)
             print(f"  ✓ Compactness: {comp_score:.2%} (fraction unchanged)")
             
             keane_results.append({
@@ -1789,6 +1913,203 @@ def export_full_metrics_csv(summary_stats, df_keane, ranked_algorithms, top_n, o
     return output_path
 
 
+def select_fastest_algorithms(csv_path='./metrics_full_results.csv',
+                               n_fastest=N_FASTEST_FOR_LARGE_SWEEP,
+                               min_keane_validity=0.0):
+    """
+    Pick the n_fastest quickest-running algorithms out of a prior main()
+    run's metrics_full_results.csv.
+
+    Only algorithms that actually produced at least one successful
+    counterfactual (i.e. have a Rank — see export_full_metrics_csv()) are
+    eligible: an algorithm that merely errors out instantly (e.g. Sub-SpaCE
+    on univariate FordA data, ~0s runtime) is fast but useless, and would
+    otherwise crowd out algorithms that are fast *and* actually work.
+
+    Args:
+        csv_path: path to a metrics_full_results.csv produced by main().
+        n_fastest: how many algorithms to select (default
+            N_FASTEST_FOR_LARGE_SWEEP).
+        min_keane_validity: optional extra quality floor (0-1) on Keane
+            validity — set e.g. 0.5 to also require the algorithm to
+            succeed on at least half its attempts, not just be fast when it
+            does succeed. Default 0.0 imposes no extra floor beyond "ranked
+            at all".
+
+    Returns:
+        List of algorithm names, fastest (lowest mean runtime) first.
+    """
+    df = pd.read_csv(csv_path)
+
+    eligible = df[df['Rank'].notna()].dropna(subset=['Runtime_Mean_Seconds']).copy()
+    if min_keane_validity > 0 and 'Keane_Validity' in eligible.columns:
+        eligible = eligible[eligible['Keane_Validity'] >= min_keane_validity]
+
+    eligible = eligible.sort_values('Runtime_Mean_Seconds', ascending=True)
+    fastest = eligible['Algorithm'].head(n_fastest).tolist()
+
+    print(f"Selected {len(fastest)} fastest algorithm(s) from {csv_path} "
+          f"(of {len(eligible)} eligible, ranked, successful ones):")
+    for name, runtime in zip(fastest, eligible['Runtime_Mean_Seconds'].head(n_fastest)):
+        print(f"  {name}: {runtime:.3f}s mean runtime")
+
+    return fastest
+
+
+def run_fastest_methods_sweep(fastest_names=None, n_instances=LARGE_SWEEP_N_INSTANCES,
+                               csv_path='./metrics_full_results.csv',
+                               output_dir=FAST_SWEEP_OUTPUT_DIR,
+                               checkpoint_path=FAST_SWEEP_CHECKPOINT_PATH,
+                               resume=True):
+    """
+    Re-evaluate just the fastest previously-ranked algorithms across a much
+    larger sample of instances than main()'s own 10 — see the module-level
+    comment above N_FASTEST_FOR_LARGE_SWEEP for why this is only feasible
+    once the slow algorithms have been dropped.
+
+    Mirrors main()'s own per-instance loop (same evaluate_single_instance(),
+    same incremental checkpointing pattern — see CHECKPOINT_PATH/_save_
+    checkpoint()/_load_checkpoint() above, but under FAST_SWEEP_CHECKPOINT_PATH
+    so it can't collide with a main() run's own checkpoint) and reuses all of
+    main()'s aggregation/plotting/export helpers, just scoped to fewer
+    algorithms and written under output_dir instead of the repo root so
+    nothing here overwrites main()'s own metrics_*.png / metrics_full_results.csv.
+
+    Args:
+        fastest_names: explicit list of algorithm names to run, or None to
+            select them via select_fastest_algorithms(csv_path=csv_path).
+        n_instances: how many instances to evaluate (default
+            LARGE_SWEEP_N_INSTANCES = 100).
+        csv_path: metrics_full_results.csv to read fastest_names from, when
+            fastest_names isn't given explicitly. Ignored otherwise.
+        output_dir: directory for this sweep's own plots/CSV (created if
+            missing).
+        checkpoint_path: checkpoint file for this sweep specifically.
+        resume: whether to resume from checkpoint_path if present (set
+            False to always start fresh, mirroring RESUME_FROM_CHECKPOINT).
+
+    Returns:
+        The path to the exported CSV (metrics_full_results_fast_sweep.csv
+        under output_dir), or None if no instance produced any successful
+        counterfactual.
+    """
+    print("=== Fastest-Methods, Large-Sample Sweep ===\n")
+    os.makedirs(output_dir, exist_ok=True)
+
+    model, dataset_train, dataset_test = load_forda_data_and_model()
+    model_wrapper = pytorch_model_wrapper(model)
+
+    EVAL_SPLIT = 'train'
+    eval_dataset = dataset_train if EVAL_SPLIT == 'train' else dataset_test
+
+    if fastest_names is None:
+        fastest_names = select_fastest_algorithms(csv_path=csv_path)
+    if not fastest_names:
+        print("❌ No fastest algorithms selected — nothing to run!")
+        return None
+
+    all_algorithms = create_algorithm_wrappers(eval_dataset, model)
+    algorithms = {name: all_algorithms[name] for name in fastest_names if name in all_algorithms}
+    missing = [name for name in fastest_names if name not in all_algorithms]
+    if missing:
+        print(f"⚠ {len(missing)} selected algorithm(s) no longer exist in "
+              f"create_algorithm_wrappers(), skipping: {missing}")
+    print(f"✓ Running {len(algorithms)} algorithm(s) on {n_instances} instances "
+          f"of the '{EVAL_SPLIT}' split")
+
+    n_instances = min(n_instances, len(eval_dataset.X))
+    instance_indices = np.random.choice(len(eval_dataset.X), n_instances, replace=False)
+    instance_signature = [int(idx) for idx in instance_indices]
+
+    completed = _load_checkpoint(checkpoint_path, instance_signature) if resume else {}
+
+    all_results = []
+    original_ts_list = []
+    target_classes_list = []
+
+    for i, idx in tqdm(enumerate(instance_indices), total=n_instances, desc="Fast-sweep instances"):
+        if i in completed:
+            cached = completed[i]
+            original_ts_list.append(cached['original_ts'])
+            target_classes_list.append(cached['target_class'])
+            all_results.append(cached['result'])
+            continue
+
+        original_ts = eval_dataset.X[idx]
+        label = np.argmax(eval_dataset.y[idx])
+        target_class = 1 - label
+
+        original_ts_list.append(original_ts)
+        target_classes_list.append(target_class)
+
+        result = evaluate_single_instance(original_ts, label, model_wrapper, algorithms, eval_dataset)
+        all_results.append(result)
+
+        completed[i] = {'original_ts': original_ts, 'target_class': target_class, 'result': result}
+        _save_checkpoint(checkpoint_path, instance_signature, completed)
+
+    if resume and os.path.exists(checkpoint_path):
+        os.remove(checkpoint_path)
+
+    valid_results = [r for r in all_results if r is not None]
+    if not valid_results:
+        print("❌ No successful evaluations in fast sweep!")
+        return None
+    print(f"\n✓ Successfully evaluated {len(valid_results)} instances")
+
+    # Collect runtimes up front so rank_algorithms() can apply its handicap,
+    # same as main() does.
+    df_runtime = compute_runtime_dataframe(all_results)
+    runtime_by_algorithm = (df_runtime.groupby('Algorithm')['Runtime'].mean().to_dict()
+                             if df_runtime is not None else None)
+
+    df = compute_metrics_dataframe(valid_results)
+    ranked_algorithms = []
+    if df is not None and not df.empty:
+        summary_stats_for_ranking = df.groupby(['Algorithm', 'Metric'])['Value'].agg(
+            ['mean', 'std', 'median']).round(3)
+        ranked_algorithms = rank_algorithms(summary_stats_for_ranking, algorithms.keys(),
+                                             runtime_by_algorithm=runtime_by_algorithm)
+
+    # No top_algorithms truncation needed anywhere below — every algorithm
+    # here is already one of the pre-selected fastest ones.
+    composite_filenames = visualize_composite_scores(ranked_algorithms, output_dir=output_dir,
+                                                      top_n=len(algorithms))
+    output_filenames, summary_stats = create_results_visualization(df, output_dir=output_dir)
+
+    df_keane = evaluate_keane_metrics_batch(original_ts_list, all_results, model_wrapper, target_classes_list)
+    keane_filenames = visualize_keane_metrics(df_keane, output_dir=output_dir) if df_keane is not None else []
+
+    reference_data = np.array([eval_dataset.X[i] for i in range(min(100, len(eval_dataset.X)))])
+    df_evalpy = evaluate_full_metrics_batch(original_ts_list, all_results, model_wrapper,
+                                             target_classes_list, reference_data)
+    evalpy_filenames = visualize_full_metrics(df_evalpy, output_dir=output_dir) if df_evalpy is not None else []
+
+    all_plot_files = (list(composite_filenames) + list(output_filenames)
+                      + list(keane_filenames) + list(evalpy_filenames))
+    header_lines = [
+        f"Fastest-methods sweep — {len(algorithms)} algorithm(s), {n_instances} instances "
+        f"({EVAL_SPLIT} split)",
+        f"Selected by lowest mean runtime from: {csv_path}",
+    ]
+    if ranked_algorithms:
+        top_name, top_score = ranked_algorithms[0]
+        header_lines.append(f"Top algorithm: {top_name}  (composite score: {top_score:.3f})")
+    combine_png_files(all_plot_files, os.path.join(output_dir, 'metrics_combined_fast_sweep.png'),
+                       header_lines=header_lines)
+
+    output_csv = os.path.join(output_dir, 'metrics_full_results_fast_sweep.csv')
+    export_full_metrics_csv(
+        summary_stats, df_keane, ranked_algorithms, len(algorithms), output_csv,
+        all_algorithm_names=algorithms.keys(), df_evalpy=df_evalpy, df_runtime=df_runtime,
+    )
+
+    print("\n=== Fastest-Methods Sweep Complete ===")
+    print(f"  - {output_dir}/metrics_combined_fast_sweep.png")
+    print(f"  - {output_csv}")
+    return output_csv
+
+
 def main():
     """Main execution function."""
     print("=== Comprehensive Counterfactual Metrics Evaluation ===\n")
@@ -1816,14 +2137,26 @@ def main():
     # Select instances (diverse examples) from the chosen split
     n_instances = 10  # Evaluate on 10 instances
     instance_indices = np.random.choice(len(eval_dataset.X), n_instances, replace=False)
+    instance_signature = [int(idx) for idx in instance_indices]
 
     print(f"\n=== Evaluating {n_instances} {EVAL_SPLIT} instances ===")
+
+    completed = (_load_checkpoint(CHECKPOINT_PATH, instance_signature)
+                 if RESUME_FROM_CHECKPOINT else {})
 
     all_results = []
     original_ts_list = []  # Store original time series for visualization
     target_classes_list = []  # Store target classes for Keane/evaluate.py metrics
 
     for i, idx in tqdm(enumerate(instance_indices), total=n_instances, desc="Evaluating instances"):
+        if i in completed:
+            cached = completed[i]
+            original_ts_list.append(cached['original_ts'])
+            target_classes_list.append(cached['target_class'])
+            all_results.append(cached['result'])
+            print(f"\n--- Instance {i+1}/{n_instances} (Index: {idx}) — loaded from checkpoint ---")
+            continue
+
         original_ts = eval_dataset.X[idx]
         label = np.argmax(eval_dataset.y[idx])
         target_class = 1 - label  # Binary classification
@@ -1834,14 +2167,24 @@ def main():
         print(f"\n--- Instance {i+1}/{n_instances} (Index: {idx}) ---")
         result = evaluate_single_instance(original_ts, label, model_wrapper, algorithms, eval_dataset)
         all_results.append(result)
-    
+
+        # Checkpoint immediately so a kill/timeout after this point doesn't
+        # lose this (and every prior) instance's ~19-20 min of work.
+        completed[i] = {'original_ts': original_ts, 'target_class': target_class, 'result': result}
+        _save_checkpoint(CHECKPOINT_PATH, instance_signature, completed)
+
+    # The expensive per-instance sweep is now fully done — remove the
+    # checkpoint so a future fresh run doesn't resume stale results.
+    if RESUME_FROM_CHECKPOINT and os.path.exists(CHECKPOINT_PATH):
+        os.remove(CHECKPOINT_PATH)
+
     # Filter out None results
     valid_results = [r for r in all_results if r is not None]
-    
+
     if not valid_results:
         print("❌ No successful evaluations!")
         return
-    
+
     print(f"\n✓ Successfully evaluated {len(valid_results)} instances")
     
     # Cap how many algorithms get plotted into metrics_combined.png; the
@@ -1851,6 +2194,13 @@ def main():
 
     # Create visualizations and summary
     try:
+        # Collect algorithm runtimes (all algorithms, every attempt — successes,
+        # failures, and timeouts alike) up front, so rank_algorithms() below can
+        # apply its runtime handicap to the composite score.
+        df_runtime = compute_runtime_dataframe(all_results)
+        runtime_by_algorithm = (df_runtime.groupby('Algorithm')['Runtime'].mean().to_dict()
+                                 if df_runtime is not None else None)
+
         # Build the full per-instance metrics table and rank algorithms on it
         # up front, so we know which ones to plot before any plotting happens.
         df = compute_metrics_dataframe(valid_results)
@@ -1859,9 +2209,11 @@ def main():
         if df is not None and not df.empty:
             summary_stats_for_ranking = df.groupby(['Algorithm', 'Metric'])['Value'].agg(
                 ['mean', 'std', 'median']).round(3)
-            ranked_algorithms = rank_algorithms(summary_stats_for_ranking, algorithms.keys())
+            ranked_algorithms = rank_algorithms(summary_stats_for_ranking, algorithms.keys(),
+                                                 runtime_by_algorithm=runtime_by_algorithm)
             top_algorithms = [name for name, _ in ranked_algorithms[:TOP_N]]
-            print(f"\n✓ Ranked {len(ranked_algorithms)} algorithms; "
+            print(f"\n✓ Ranked {len(ranked_algorithms)} algorithms (runtime-handicapped; "
+                  f"scale={RUNTIME_HANDICAP_SCALE}s); "
                   f"plotting the top {len(top_algorithms)} in metrics_combined.png")
 
         # Composite-score bar chart — the overall "who won" ranking, shown
@@ -1909,9 +2261,8 @@ def main():
         combine_png_files(all_plot_files, os.path.join('./', 'metrics_combined.png'),
                            header_lines=header_lines)
 
-        # Collect algorithm runtimes (all algorithms, every attempt — successes,
-        # failures, and timeouts alike).
-        df_runtime = compute_runtime_dataframe(all_results)
+        # (df_runtime was already collected above, before ranking, so
+        # rank_algorithms() could apply its runtime handicap.)
 
         # Export the complete, unfiltered results (every algorithm, not just
         # the top_algorithms shown above) to CSV.
@@ -1937,7 +2288,7 @@ def main():
         # Overall performance summary
         print("\n=== Overall Performance Summary ===")
         if ranked_algorithms:
-            print("Algorithm Rankings (based on validity, proximity, and realism):")
+            print("Algorithm Rankings (based on validity, proximity, and realism; runtime-handicapped):")
             for i, (algorithm, score) in enumerate(ranked_algorithms, 1):
                 shown = " [shown in metrics_combined.png]" if algorithm in (top_algorithms or []) else ""
                 print(f"{i}. {algorithm}: {score:.3f}{shown}")
@@ -1970,4 +2321,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # --fast-sweep: run just the N fastest previously-ranked algorithms (see
+    # select_fastest_algorithms()) across LARGE_SWEEP_N_INSTANCES (100)
+    # instances instead of the default main() sweep — see the module-level
+    # comment above N_FASTEST_FOR_LARGE_SWEEP. Requires metrics_full_results.csv
+    # from a prior main() run to already exist (to know which algorithms are
+    # fastest); default behavior (no flag) is unchanged.
+    if '--fast-sweep' in sys.argv:
+        run_fastest_methods_sweep()
+    else:
+        main()

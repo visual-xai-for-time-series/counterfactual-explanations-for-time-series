@@ -30,6 +30,24 @@ dependencies = [
 
 [project.optional-dependencies]
 dtw = ["dtaidistance>=2.3"]
+# Extra proximity-metric backends used by cfts.metrics.proximity (lazily
+# imported there with a friendly ImportError if missing).
+proximity = [
+  "tslearn>=0.6.3",
+  "fastdtw>=0.3.4",
+]
+# EMD decomposer for cfts.cf_imfact.imfact (decomposer="emd"); imports as
+# `emd` (emd.sift.sift) — distinct from the unrelated "EMD-signal"/PyEMD
+# package, which exposes a different API.
+imfact = ["emd>=0.6.0"]
+# Wavelet decomposition path in cfts.cf_fft_cf.fft_cf.
+fft = ["pywavelets>=1.8.0"]
+# BoRF pipeline backing cf_mascots (MASCOTS); required to actually run
+# mascots_cf, not just to import cfts.
+mascots = [
+  "sparse>=0.15",
+  "numba>=0.59",
+]
 examples = [
   "matplotlib>=3.5",
   "seaborn>=0.13",
@@ -38,6 +56,13 @@ examples = [
 ]
 all = [
   "dtaidistance>=2.3",
+  "tslearn>=0.6.3",
+  "fastdtw>=0.3.4",
+  "emd>=0.6.0",
+  "pywavelets>=1.8.0",
+  "sparse>=0.15",
+  "numba>=0.59",
+  "matplotlib>=3.5",
   "seaborn>=0.13",
   "pandas>=2.0",
   "aeon>=1.0",

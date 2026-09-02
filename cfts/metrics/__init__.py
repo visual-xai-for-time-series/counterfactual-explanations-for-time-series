@@ -26,7 +26,6 @@ __all__ = [
     'dtw_distance', 
     'dtw_distance_fast_dtaidistance',
     'fastdtw_distance_fastdtw',
-    'fastdtw_distance_distancia',
     'dtw_distance_tslearn',
     'dtw_distance_pyts',
     'compare_dtw_implementations_random_data',
@@ -67,10 +66,14 @@ __all__ = [
     'convergence_stability',
     
     # Keane et al. (2021) metrics
-    'validity',
-    'proximity',
-    'compactness',
-    'evaluate_keane_metrics',
+    'keane_validity',
+    'keane_proximity',
+    'keane_proximity_l1',
+    'keane_compactness',
+    'keane_sparsity_profile',
+    'keane_coverage',
+    'keane_relative_distance',
+    'keane_evaluate_metrics',
     
     # Utility classes and functions
     'CounterfactualEvaluator',

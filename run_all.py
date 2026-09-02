@@ -62,32 +62,35 @@ def print_section(title):
     print(f" {title}")
     print("-"*60)
 
-def run_script(script_name, description):
+def run_script(script_name, description, timeout=7200):
     """
     Run a Python script and return success status, duration, and any error.
-    
+
     Args:
         script_name (str): Name of the script to run
         description (str): Human-readable description of the script
-    
+        timeout (int): Max seconds to let the script run before it's killed
+            and treated as a failure (default 7200 = 2 hours).
+
     Returns:
         tuple: (success, duration, error_message)
     """
     print_section(f"Running {description}")
     print(f"Script: {script_name}")
-    
+    print(f"Timeout: {timeout}s ({timeout/3600:.1f}h)")
+
     start_time = time.time()
-    
+
     try:
         # Get the Python executable path for the virtual environment
         python_executable = sys.executable
-        
+
         # Run the script
         result = subprocess.run(
             [python_executable, script_name],
             capture_output=True,
             text=True,
-            timeout=7200  # 2 hours timeout per script
+            timeout=timeout
         )
         
         duration = time.time() - start_time
@@ -170,26 +173,33 @@ def main():
     # Results tracking
     results = []
     
-    # List of scripts to run
+    # List of scripts to run, with a per-script timeout in seconds.
+    #
+    # example_metrics_evaluation.py sweeps ~53 counterfactual algorithms
+    # across 10 instances; observed wall-clock is a steady ~19-20 min/instance
+    # (see its own logs/example_metrics_evaluation.log), i.e. ~3h13m-3h20m
+    # end-to-end. That's already past the old blanket 7200s (2h) timeout, so
+    # it gets a longer budget here (6h, with headroom) while the other,
+    # much shorter example scripts keep the previous 2h default.
     scripts_to_run = [
-        ('example_multivariate.py', 'Arabic Digits Counterfactual Examples'),
-        ('example_univariate.py', 'FordA Dataset Counterfactual Examples'),
-        ('example_univariate_ecg.py', 'ECG200 Dataset Counterfactual Examples'),
-        ('example_univariate_faultdetectiona.py', 'FaultDetectionA Dataset Counterfactual Examples'),
-        ('example_metrics_evaluation.py', 'Comprehensive Metrics Evaluation')
+        ('example_multivariate.py', 'Arabic Digits Counterfactual Examples', 7200),
+        ('example_univariate.py', 'FordA Dataset Counterfactual Examples', 7200),
+        ('example_univariate_ecg.py', 'ECG200 Dataset Counterfactual Examples', 7200),
+        ('example_univariate_faultdetectiona.py', 'FaultDetectionA Dataset Counterfactual Examples', 7200),
+        ('example_metrics_evaluation.py', 'Comprehensive Metrics Evaluation', 21600),
     ]
-    
+
     print_section("Execution Plan")
     print("The following scripts will be executed in order:")
-    for i, (script, description) in enumerate(scripts_to_run, 1):
-        print(f"  {i}. {script} - {description}")
-    
+    for i, (script, description, timeout) in enumerate(scripts_to_run, 1):
+        print(f"  {i}. {script} - {description} (timeout: {timeout/3600:.1f}h)")
+
     # Execute each script
     print_header("Script Execution")
-    
-    for script, description in scripts_to_run:
+
+    for script, description, timeout in scripts_to_run:
         script_full_path = os.path.join(examples_dir, script)
-        success, duration, error = run_script(script_full_path, description)
+        success, duration, error = run_script(script_full_path, description, timeout=timeout)
         
         results.append({
             'script': script,

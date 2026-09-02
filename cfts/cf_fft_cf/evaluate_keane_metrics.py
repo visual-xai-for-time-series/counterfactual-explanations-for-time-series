@@ -42,7 +42,7 @@ from cfts.cf_fft_cf import (
 )
 
 # Import Keane et al. (2021) metrics
-from cfts.metrics.keane import validity, proximity, compactness, evaluate_keane_metrics
+from cfts.metrics.keane import keane_validity, keane_proximity, keane_compactness, keane_evaluate_metrics
 
 
 def _mark_best_bar(ax, values, higher_is_better=True):
@@ -243,7 +243,7 @@ def main():
                         
                         # Calculate Keane et al. metrics
                         try:
-                            keane_results = evaluate_keane_metrics(
+                            keane_results = keane_evaluate_metrics(
                                 original_ts_list=sample_2d,
                                 counterfactual_ts_list=cf_2d,
                                 model=model_wrapper,

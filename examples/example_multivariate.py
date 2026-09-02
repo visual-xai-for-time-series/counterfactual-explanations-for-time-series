@@ -670,7 +670,7 @@ def create_enhanced_visualization(sample, label, original_pred_np, original_clas
     return output_filename
 
 # Prepare counterfactual results for visualization
-cf_results = {
+cf_results_all = {
     'Native Guide': (cf_ng, prediction_ng),
     'COMTE': (cf_comte, prediction_comte),
     'SETS': (cf_sets, prediction_sets),
@@ -684,6 +684,22 @@ cf_results = {
     'TERCE': (cf_terce, prediction_terce),
     'CEM': (cf_cem, prediction_cem),
 }
+
+def _achieved_target(pred, target):
+    """Whether a method's resulting prediction actually reached target_class."""
+    if pred is None:
+        return False
+    return int(np.argmax(np.asarray(pred).reshape(-1))) == target
+
+# Only keep methods that actually produced a valid counterfactual (errored
+# out or ran but never reached target_class isn't a counterfactual to show)
+# rather than plotting every attempt regardless of outcome.
+cf_results = {name: (cf, pred) for name, (cf, pred) in cf_results_all.items()
+              if _achieved_target(pred, target_class)}
+excluded_names = [name for name in cf_results_all if name not in cf_results]
+if excluded_names:
+    print(f"Excluded {len(excluded_names)} method(s) that didn't produce a valid "
+          f"counterfactual (no result, or wrong predicted class): {excluded_names}")
 
 # Create enhanced visualization
 create_enhanced_visualization(sample, label, original_pred_np, original_class, cf_results, is_multivariate)

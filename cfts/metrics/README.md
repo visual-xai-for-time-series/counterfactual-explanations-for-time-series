@@ -255,12 +255,6 @@ Output:
         "std_distance": 0.742454586081078,
         "std_runtime_seconds": 0.8232472534648475
     },
-    "fastdtw_distancia": {
-        "error": "distancia package is required. Install with: pip install distancia",
-        "n_runs": 5,
-        "n_success": 0,
-        "status": "missing_dependency"
-    },
     "fastdtw_fastdtw": {
         "errors": [],
         "mean_distance": 196.81595576845967,

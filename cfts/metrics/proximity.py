@@ -22,12 +22,6 @@ except ImportError:
     FASTDTW_AVAILABLE = False
 
 try:
-    from distancia import FastDTW as DistanciaFastDTW
-    DISTANCIA_FASTDTW_AVAILABLE = True
-except ImportError:
-    DISTANCIA_FASTDTW_AVAILABLE = False
-
-try:
     from tslearn.metrics import dtw as tslearn_dtw
     TSLEARN_DTW_AVAILABLE = True
 except ImportError:
@@ -138,42 +132,6 @@ def fastdtw_distance_fastdtw(original_ts: np.ndarray,
     return float(distance)
 
 
-def fastdtw_distance_distancia(original_ts: np.ndarray,
-                               counterfactual_ts: np.ndarray,
-                               radius: int = 1) -> float:
-    """
-    Calculates FastDTW distance using `distancia.FastDTW`.
-
-    Args:
-        original_ts: Original time series data
-        counterfactual_ts: Generated counterfactual time series
-        radius: Neighborhood radius used by FastDTW approximation
-
-    Returns:
-        FastDTW distance between the time series
-    """
-    if not DISTANCIA_FASTDTW_AVAILABLE:
-        raise ImportError("distancia package is required. Install with: pip install distancia")
-
-    original_flat = _flatten_time_series(original_ts)
-    cf_flat = _flatten_time_series(counterfactual_ts)
-
-    # Different distancia versions expose different call styles.
-    try:
-        calculator = DistanciaFastDTW(radius=radius)
-    except TypeError:
-        calculator = DistanciaFastDTW()
-
-    if hasattr(calculator, 'distance'):
-        return float(calculator.distance(original_flat, cf_flat))
-    if hasattr(calculator, 'calculate'):
-        return float(calculator.calculate(original_flat, cf_flat))
-    if callable(calculator):
-        return float(calculator(original_flat, cf_flat))
-
-    raise RuntimeError("Unsupported distancia.FastDTW API: expected distance/calculate/callable")
-
-
 def dtw_distance_tslearn(original_ts: np.ndarray, counterfactual_ts: np.ndarray) -> float:
     """
     Calculates DTW distance using `tslearn.metrics.dtw`.
@@ -240,7 +198,6 @@ def compare_dtw_implementations_random_data(n_runs: int = 5,
         'dtaidistance_dtw': lambda x, y: dtw_distance(x, y),
         'dtaidistance_dtw_fast': lambda x, y: dtw_distance_fast_dtaidistance(x, y),
         'fastdtw_fastdtw': lambda x, y: fastdtw_distance_fastdtw(x, y, radius=radius),
-        'fastdtw_distancia': lambda x, y: fastdtw_distance_distancia(x, y, radius=radius),
         'dtw_tslearn': lambda x, y: dtw_distance_tslearn(x, y),
         'dtw_pyts': lambda x, y: dtw_distance_pyts(x, y)
     }
@@ -474,7 +431,6 @@ __all__ = [
     'dtw_distance', 
     'dtw_distance_fast_dtaidistance',
     'fastdtw_distance_fastdtw',
-    'fastdtw_distance_distancia',
     'dtw_distance_tslearn',
     'dtw_distance_pyts',
     'compare_dtw_implementations_random_data',
