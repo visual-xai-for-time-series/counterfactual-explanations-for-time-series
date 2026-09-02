@@ -1976,31 +1976,38 @@ cf, prediction = timex_cf(
 
 ---
 
-#### 32. TimeX++ - Learning Time-Series Explanations with Information Bottleneck (2024)
+#### 32. TimeXcf++ - Unified Information Bottleneck Framework for Time Series Explanations (2026)
 **Implementation:** `cfts/cf_timex_plus_plus/timex_plus_plus.py`
 
-**Status: implemented as a counterfactual reinterpretation, not the original explainer.** `timexplusplus_explanation` (returning a pure saliency mask, as sketched below) still does not exist. What's implemented instead is `timexplusplus_cf`, which keeps the paper's extractor/conditioner architecture and objective (mask extraction, compactness quantifier, Gaussian-padded reference instance, MLP conditioner) but retargets the label-consistency term from *preserving* the query's own predicted class to *flipping* to a given `target_class`, so the result fits this repository's `<name>_cf(sample, model, target_class, dataset, ...) -> (counterfactual, scores)` contract used by every other method (and by `example_metrics_evaluation.py`). See the module's docstring for the full reasoning, the resulting simplifications (moment-matching approximation of the distribution-shift KL term, per-call training discarded after one counterfactual, defaults retuned so validity isn't dominated by the compactness/distribution terms), and `timexplusplus_fit` / `timexplusplus_generate` for reusing one trained extractor/conditioner pair across several queries that share a target class.
+**Status: implements the paper's own counterfactual path (TimeXcf++), not a hand-retargeted explainer.** arXiv:2608.25897 unifies the ICML2024 TimeX++ architecture into two explicit paths sharing one bottleneck extractor g_phi: an attribution path (TimeXa++, label-consistency against the query's own class) and a counterfactual path (TimeXcf++, label-consistency against a target class Y'', with its own generator/reference structure). `timexplusplus_cf` implements the latter directly: a straight-through-Bernoulli-sampled bottleneck mask M gates a learned perturbation E (plus a target-class-conditioned noise term used only while training), anchored by a structural loss that forces everything outside M back to the original query. See the module's docstring for the full pipeline, the paper details it leaves unspecified (generator architecture, L_KL closed form, alpha/beta/lambda_con numeric defaults), and `timexplusplus_fit` / `timexplusplus_generate` for reusing one trained extractor/generator set across several queries that share a target class.
 
-**Description:** Improved time series explainer based on information bottleneck principle that generates in-distributed and label-preserving explanation instances. Addresses distribution shift and signaling issues in applying IB to time series explainability.
+**Description:** Unifies attribution and counterfactual time-series explanation under one information-bottleneck objective, sharing a stochastic bottleneck extractor between "preserved information yields attribution explanations" and "controlled information removal produces stable counterfactual explanations."
 
 **Key Features:**
-- **Information bottleneck framework**: Modified IB objective for time series explainability
-- **Explanation extractor**: Transformer encoder-decoder architecture producing stochastic masks
-- **Explanation conditioner**: MLP-based network generating in-distribution instances
-- **Label consistency**: Preserves predictions through JS divergence minimization
-- **Avoids OOD issues**: Generates explanation-embedded instances within original distribution
-- **Theoretical foundation**: Addresses signaling problem and compactness issues in IB
+- **Unified information bottleneck framework**: one extractor, two label-consistency targets (original class for attribution, target class for counterfactual)
+- **Bottleneck extractor g_phi**: transformer encoder producing a stochastic per-(timestep, channel) mask distribution pi
+- **Straight-through Bernoulli mask sampling**: M = STE(Bern(pi)), gradients bypass the discrete sampling op
+- **Counterfactual generators psi_cf / psi_n**: psi_cf predicts the edit E applied within M; psi_n folds in a target-class reference instance as training-only noise
+- **Hard causal anchor**: a structural loss forces the counterfactual to equal the original query outside M, confining edits to the sparse bottleneck
+- **Label consistency**: JS-divergence term, computed against the target class for the counterfactual path
 
-**Algorithm:**
-1. **Explanation Extraction**: Transformer-based encoder-decoder maps input X to stochastic mask π
-2. **Compactness Quantifier**: Minimizes KL divergence D_KL(P(M|X)||Q(M)) + connective loss
-3. **Reference Instance**: Generate X̃_r via Gaussian padding on masked input
-4. **Conditioner**: MLP Ψ_θ maps [M, X] to explanation-embedded instance X̃
-5. **Informativeness**: Minimize label consistency loss (JS divergence) + distribution shift loss (KL) + reference distance loss
-6. **Overall Objective**: ℒ = ℒ_LC + α·ℒ_M + β·(ℒ_KL + ℒ_dr)
+**Algorithm (counterfactual path):**
+1. **Bottleneck extraction**: transformer g_phi maps input X to stochastic selection probabilities pi
+2. **Mask sampling**: M = STE(Bern(pi)) (straight-through estimator)
+3. **Perturbation**: E = psi_cf(X, M); training-only noise epsilon = psi_n(X, M, X_ref) from a target-class reference X_ref
+4. **Counterfactual instance**: X̃_cf = X + M⊙E + epsilon (training) / X + M⊙E (inference)
+5. **Compactness**: minimizes KL(Bernoulli(pi) || Bernoulli(r)) + continuity penalty, r=0.1 by default for this path (paper's own value, stricter than the attribution path's r=0.5)
+6. **Structural/bound loss**: ‖(1-M)⊙(X̃_cf - X)‖² anchors the unedited region to the original query
+7. **Overall Objective**: ℒ = ℒ_LC(target_class, ·) + α·ℒ_M + β·(ℒ_KL + ℒ_bound)
 
 **Reference:**
 ```bibtex
+@article{zheng2026unifiedib,
+  title={Towards A Unified Information Bottleneck Framework for Time Series Explanations},
+  author={Zheng, Xu and Liu, Zichuan and Chen, Zhuomin and Akewar, Mayur and Bhimani, Janki and Liu, Jason and Sha, Mo and Ni, Jingchao and Cheng, Wei and Luo, Dongsheng},
+  journal={arXiv preprint arXiv:2608.25897},
+  year={2026}
+}
 @inproceedings{liu2024timexplusplus,
   title={TimeX++: Learning Time-Series Explanations with Information Bottleneck},
   author={Liu, Zichuan and Wang, Tianchun and Shi, Jimeng and Xu, Zheng and Chen, Zhuomin and Song, Lei and Dong, Wenqian and Obeysekera, Jayantha and Shirani, Farhad and Luo, Dongsheng},
@@ -2010,31 +2017,32 @@ cf, prediction = timex_cf(
 ```
 
 **Links:**
-- Paper: [arXiv:2405.09308](https://arxiv.org/abs/2405.09308)
-- HTML Paper: [arXiv HTML](https://arxiv.org/html/2405.09308v1)
-- Repository: [https://github.com/zichuan-liu/TimeXplusplus](https://github.com/zichuan-liu/TimeXplusplus)
+- Paper (counterfactual path, TimeXcf++): [arXiv:2608.25897](https://arxiv.org/abs/2608.25897)
+- Paper (shared extractor architecture, TimeX++): [arXiv:2405.09308](https://arxiv.org/abs/2405.09308)
+- Repository (TimeX++ ICML2024 release): [https://github.com/zichuan-liu/TimeXplusplus](https://github.com/zichuan-liu/TimeXplusplus)
 
 **Usage Example:**
 ```python
 from cfts.cf_timex_plus_plus.timex_plus_plus import timexplusplus_cf
 
-# Trains a fresh explanation extractor + conditioner on `dataset`, targeting
-# target_class, then generates a counterfactual for `sample` with one
-# forward pass. alpha/beta/r/epochs default to values retuned for reliable
-# validity (see the module docstring) rather than the paper's own weighting.
+# Trains a fresh bottleneck extractor + perturbation/noise generators on
+# `dataset`, targeting target_class, then generates a counterfactual for
+# `sample` with one forward pass. alpha/beta default to values retuned for
+# reliable validity (see the module docstring); r=0.1 is the paper's own
+# stated default for this (counterfactual) path.
 cf, prediction = timexplusplus_cf(
     sample=sample,
     model=model,
     target_class=1,
     dataset=training_data,
     alpha=0.5,  # Compactness weight
-    beta=0.25,  # Distribution consistency weight
-    r=0.5,      # Mask sparsity parameter
+    beta=0.25,  # Distribution/structural consistency weight
+    r=0.1,      # Mask sparsity parameter (paper's counterfactual-path default)
     epochs=80,
 )
 
-# Pass return_mask=True for a 3-tuple (cf, prediction, mask), the closest
-# thing to the original paper's saliency output:
+# Pass return_mask=True for a 3-tuple (cf, prediction, mask): the sparse
+# bottleneck mask M the counterfactual edit was confined to.
 cf, prediction, mask = timexplusplus_cf(
     sample=sample, model=model, target_class=1, dataset=training_data,
     return_mask=True,
