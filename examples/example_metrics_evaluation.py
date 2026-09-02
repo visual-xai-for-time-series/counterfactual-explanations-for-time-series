@@ -29,10 +29,11 @@ reinterpretations that are trained inline, per call, like every other trained
 method here: `cfts.cf_timex.timex_cf.timex_cf` (a Wachter-style optimiser with
 a DTW class-prototype term, matching the "TimeX" method from the
 TS-Counterfactual-Explanation-Bake-off benchmark) and
-`cfts.cf_timex_plus_plus.timex_plus_plus.timexplusplus_cf` (TimeX++'s
-explanation-extractor + conditioner architecture, retargeted from label
-preservation to `target_class` — see that module's docstring for the full
-reasoning). Both produce an actual counterfactual time series, not an
+`cfts.cf_timex_plus_plus.timex_plus_plus.timexplusplus_cf` (TimeXcf++, the
+counterfactual path of the unified information-bottleneck framework that
+extends TimeX++ — arXiv:2608.25897 — with label-consistency computed
+directly against `target_class`; see that module's docstring for the full
+pipeline). Both produce an actual counterfactual time series, not an
 attribution map.
 
 All 53 algorithms are evaluated, but to keep it readable, metrics_combined.png
@@ -717,9 +718,9 @@ def create_algorithm_wrappers(dataset, model):
 
     def timex_plus_plus_wrapper(original_ts, target_class=None, **kwargs):
         try:
-            # IB explanation extractor + conditioner, retargeted from label
-            # preservation to target_class — see module docstring of
-            # cfts/cf_timex_plus_plus/timex_plus_plus.py for the reasoning.
+            # TimeXcf++: unified-IB-framework counterfactual path, label
+            # consistency against target_class — see module docstring of
+            # cfts/cf_timex_plus_plus/timex_plus_plus.py for the full pipeline.
             cf, _ = timexplusplus_cf(original_ts, model,
                                     target_class=target_class,
                                     dataset=dataset,
