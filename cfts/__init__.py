@@ -28,6 +28,7 @@ Available Algorithms:
 - Native-Guide counterfactuals (cf_native_guide)
 - SETS counterfactuals (cf_sets)
 - SG-CF counterfactuals (cf_sg_cf)
+- Soft-DTW-CFE counterfactuals (cf_soft_dtw_cfe)
 - SPARCE counterfactuals (cf_sparce)
 - Subspace counterfactuals (cf_subspace)
 - TERCE counterfactuals (cf_terce)
@@ -69,6 +70,7 @@ from . import (
     cf_native_guide,
     cf_sets,
     cf_sg_cf,
+    cf_soft_dtw_cfe,
     cf_sparce,
     cf_subspace,
     cf_terce,
@@ -116,6 +118,7 @@ __all__ = [
     "cf_native_guide",
     "cf_sets",
     "cf_sg_cf",
+    "cf_soft_dtw_cfe",
     "cf_sparce",
     "cf_subspace",
     "cf_terce",
@@ -156,6 +159,7 @@ COUNTERFACTUAL_ALGORITHMS = [
     "cf_native_guide",
     "cf_sets",
     "cf_sg_cf",
+    "cf_soft_dtw_cfe",
     "cf_sparce",
     "cf_subspace",
     "cf_terce",

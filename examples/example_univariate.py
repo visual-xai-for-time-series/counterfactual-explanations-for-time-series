@@ -4,7 +4,10 @@ FordA Counterfactual Explanations Example
 This example demonstrates counterfactual explanation generation for the FordA dataset
 using two representative methods from each category (Optimization-Based: Wachter, COMTE;
 Evolutionary: TSEvo, Sub-SpaCE; Instance-Based: Native Guide, CELS; Latent Space: GLACIER,
-Latent-CF; Segment-Based: SETS, TS-CEM; Hybrid: TeRCE, MG-CF) with enhanced visualization.
+Latent-CF; Segment-Based: SETS, TS-CEM; Hybrid: TeRCE, MG-CF), plus Soft-DTW-CFE
+(Plausibility-Based: gradient optimization in input space with a differentiable Soft-DTW
+term pulling the counterfactual toward its nearest target-class training series), with
+enhanced visualization.
 
 Features:
 - Univariate time series support
@@ -74,6 +77,7 @@ import cfts.cf_latent_cf.latent_cf as latent_cf
 import cfts.cf_cels.cels as cels
 import cfts.cf_terce.terce as terce
 import cfts.cf_cem.cem as cem_mod
+from cfts.cf_soft_dtw_cfe.soft_dtw_cfe import soft_dtw_cfe_cf
 
 
 
@@ -273,6 +277,7 @@ timing_results = {}
 methods = [
     'Native Guide', 'COMTE', 'SETS', 'Wachter Genetic', 'GLACIER',
     'Sub-SpaCE', 'TSEvo', 'MG-CF', 'Latent-CF', 'CELS', 'TERCE', 'CEM-PN',
+    'Soft-DTW-CFE',
 ]
 
 # Initialize progress bar
@@ -494,6 +499,27 @@ except Exception as e:
 finally:
     progress.update(1)
 
+print('Start with Soft-DTW-CFE')
+start_time = time.time()
+try:
+    # steps reduced from the default 500 (paper setting) to keep this demo's
+    # runtime comparable to the other iterative methods above.
+    cf_soft_dtw_cfe, prediction_soft_dtw_cfe = soft_dtw_cfe_cf(
+        sample, model,
+        target_class=target_class,
+        dataset=dataset_test,
+        steps=150,
+        verbose=False,
+    )
+    timing_results['Soft-DTW-CFE'] = time.time() - start_time
+    print(f'Soft-DTW-CFE completed in {timing_results["Soft-DTW-CFE"]:.3f} seconds')
+except Exception as e:
+    cf_soft_dtw_cfe, prediction_soft_dtw_cfe = None, None
+    timing_results['Soft-DTW-CFE'] = time.time() - start_time
+    print(f'Soft-DTW-CFE failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
 # Close the progress bar
 progress.close()
 
@@ -536,6 +562,7 @@ print(format_combined_result('Latent-CF', prediction_latent_cf, timing_results['
 print(format_combined_result('CELS', prediction_cels, timing_results['CELS']))
 print(format_combined_result('TERCE', prediction_terce, timing_results['TERCE']))
 print(format_combined_result('CEM-PN', prediction_cem_pn, timing_results['CEM-PN']))
+print(format_combined_result('Soft-DTW-CFE', prediction_soft_dtw_cfe, timing_results['Soft-DTW-CFE']))
 print('='*80)
 print()
 
@@ -565,6 +592,7 @@ cf_latent_cf_pl = None if cf_latent_cf is None else _to_channel_first(cf_latent_
 cf_cels_pl = None if cf_cels is None else _to_channel_first(cf_cels)
 cf_terce_pl = None if cf_terce is None else _to_channel_first(cf_terce)
 cf_cem_pn_pl = None if cf_cem_pn is None else _to_channel_first(cf_cem_pn)
+cf_soft_dtw_cfe_pl = None if cf_soft_dtw_cfe is None else _to_channel_first(cf_soft_dtw_cfe)
 
 def _fmt_pred(pred):
     """Format a model prediction array into 'label (conf)' or 'None'."""
@@ -593,6 +621,7 @@ pred_latent_cf_str = _fmt_pred(prediction_latent_cf)
 pred_cels_str = _fmt_pred(prediction_cels)
 pred_terce_str = _fmt_pred(prediction_terce)
 pred_cem_pn_str = _fmt_pred(prediction_cem_pn)
+pred_soft_dtw_cfe_str = _fmt_pred(prediction_soft_dtw_cfe)
 pred_original_str = _fmt_pred(original_pred_np)
 
 def _check_success(pred, target):
@@ -616,6 +645,7 @@ success_latent_cf = _check_success(prediction_latent_cf, target_class)
 success_cels = _check_success(prediction_cels, target_class)
 success_terce = _check_success(prediction_terce, target_class)
 success_cem_pn = _check_success(prediction_cem_pn, target_class)
+success_soft_dtw_cfe = _check_success(prediction_soft_dtw_cfe, target_class)
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
     """Plot each channel on ax. arr is (C, L). styles can be list of kwargs per channel."""
@@ -649,6 +679,7 @@ methods_info = [
     ('CELS',            cf_cels_pl,      pred_cels_str,      success_cels),
     ('TERCE',           cf_terce_pl,     pred_terce_str,     success_terce),
     ('CEM-PN',          cf_cem_pn_pl,    pred_cem_pn_str,    success_cem_pn),
+    ('Soft-DTW-CFE',    cf_soft_dtw_cfe_pl, pred_soft_dtw_cfe_str, success_soft_dtw_cfe),
 ]
 included_methods = [(name, cf_pl, pred_str) for name, cf_pl, pred_str, success in methods_info if success]
 excluded_names = [name for name, _, _, success in methods_info if not success]

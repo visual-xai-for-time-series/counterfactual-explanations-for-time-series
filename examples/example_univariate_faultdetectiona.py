@@ -5,7 +5,9 @@ This example demonstrates counterfactual explanation generation for the FaultDet
 dataset two representative methods from each category (Optimization-Based: Wachter, COMTE;
 Evolutionary: TSEvo, Sub-SpaCE; Instance-Based: Native Guide, CELS; Latent Space: GLACIER,
 Latent-CF; Segment-Based: SETS, TS-CEM; Hybrid: TeRCE, MG-CF; Frequency-Decomposition-Based:
-IMFACT) with enhanced visualization.
+IMFACT), plus Soft-DTW-CFE (Plausibility-Based: gradient optimization in input space with a
+differentiable Soft-DTW term pulling the counterfactual toward its nearest target-class
+training series), with enhanced visualization.
 
 Dataset: FaultDetectionA
   - Source: https://www.timeseriesclassification.com/description.php?Dataset=FaultDetectionA
@@ -88,6 +90,7 @@ import cfts.cf_cels.cels as cels
 import cfts.cf_terce.terce as terce
 import cfts.cf_cem.cem as cem
 from cfts.cf_imfact.imfact import imfact_cf
+from cfts.cf_soft_dtw_cfe.soft_dtw_cfe import soft_dtw_cfe_cf
 
 
 # Fixed seed so the query instance selected below (np.random.randint /
@@ -343,6 +346,7 @@ timing_results = {}
 methods = [
     'Native Guide', 'COMTE', 'SETS', 'Wachter Genetic', 'GLACIER',
     'Sub-SpaCE', 'TSEvo', 'MG-CF', 'Latent-CF', 'CELS', 'TERCE', 'CEM-PN', 'IMFACT',
+    'Soft-DTW-CFE',
 ]
 
 # Initialize progress bar
@@ -588,6 +592,31 @@ except Exception as e:
 finally:
     progress.update(1)
 
+print('Start with Soft-DTW-CFE')
+start_time = time.time()
+try:
+    # FaultDetectionA's series are far longer (5120) than FordA/ECG200's
+    # (500), and Soft-DTW's alignment cost is O(L^2) per pair -- steps,
+    # k_neighbors and the neighbor pool are all cut well below the other
+    # example scripts' settings so this stays tractable here.
+    cf_soft_dtw_cfe, prediction_soft_dtw_cfe = soft_dtw_cfe_cf(
+        sample, model,
+        target_class=target_class,
+        dataset=dataset_test_ds,
+        steps=15,
+        k_neighbors=2,
+        max_samples=_SUBSET_SIZE,
+        verbose=False,
+    )
+    timing_results['Soft-DTW-CFE'] = time.time() - start_time
+    print(f'Soft-DTW-CFE completed in {timing_results["Soft-DTW-CFE"]:.3f} seconds')
+except Exception as e:
+    cf_soft_dtw_cfe, prediction_soft_dtw_cfe = None, None
+    timing_results['Soft-DTW-CFE'] = time.time() - start_time
+    print(f'Soft-DTW-CFE failed: {type(e).__name__}: {str(e)[:100]}')
+finally:
+    progress.update(1)
+
 # Close the progress bar
 progress.close()
 
@@ -629,6 +658,7 @@ print(format_combined_result('CELS', prediction_cels, timing_results['CELS']))
 print(format_combined_result('TERCE', prediction_terce, timing_results['TERCE']))
 print(format_combined_result('CEM', prediction_cem, timing_results['CEM']))
 print(format_combined_result('IMFACT', prediction_imfact, timing_results['IMFACT']))
+print(format_combined_result('Soft-DTW-CFE', prediction_soft_dtw_cfe, timing_results['Soft-DTW-CFE']))
 print('='*80)
 print()
 
@@ -659,6 +689,7 @@ cf_cels_pl       = None if cf_cels       is None else _to_channel_first(cf_cels)
 cf_terce_pl      = None if cf_terce      is None else _to_channel_first(cf_terce)
 cf_cem_pl        = None if cf_cem        is None else _to_channel_first(cf_cem)
 cf_imfact_pl     = None if cf_imfact     is None else _to_channel_first(cf_imfact)
+cf_soft_dtw_cfe_pl = None if cf_soft_dtw_cfe is None else _to_channel_first(cf_soft_dtw_cfe)
 
 
 def _fmt_pred(pred):
@@ -688,6 +719,7 @@ pred_cels_str        = _fmt_pred(prediction_cels)
 pred_terce_str       = _fmt_pred(prediction_terce)
 pred_cem_str         = _fmt_pred(prediction_cem)
 pred_imfact_str      = _fmt_pred(prediction_imfact)
+pred_soft_dtw_cfe_str = _fmt_pred(prediction_soft_dtw_cfe)
 pred_original_str    = _fmt_pred(original_pred_np)
 
 
@@ -713,6 +745,7 @@ success_cels        = _check_success(prediction_cels, target_class)
 success_terce       = _check_success(prediction_terce, target_class)
 success_cem         = _check_success(prediction_cem, target_class)
 success_imfact      = _check_success(prediction_imfact, target_class)
+success_soft_dtw_cfe = _check_success(prediction_soft_dtw_cfe, target_class)
 
 
 def plot_channels(ax, arr, title=None, styles=None, alpha=1.0):
@@ -749,6 +782,7 @@ methods_info = [
     ('TERCE',           cf_terce_pl,     pred_terce_str,     success_terce),
     ('CEM',             cf_cem_pl,       pred_cem_str,       success_cem),
     ('IMFACT',          cf_imfact_pl,    pred_imfact_str,    success_imfact),
+    ('Soft-DTW-CFE',    cf_soft_dtw_cfe_pl, pred_soft_dtw_cfe_str, success_soft_dtw_cfe),
 ]
 included_methods = [(name, cf_pl, pred_str) for name, cf_pl, pred_str, success in methods_info if success]
 excluded_names = [name for name, _, _, success in methods_info if not success]

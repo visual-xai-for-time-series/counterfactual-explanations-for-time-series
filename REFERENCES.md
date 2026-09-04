@@ -371,6 +371,52 @@ cf, prediction = topgrad_cf(
 
 ---
 
+#### Soft-DTW-CFE - Towards Plausibility in Time Series Counterfactual Explanations (2026)
+**Implementation:** `cfts/cf_soft_dtw_cfe/soft_dtw_cfe.py`
+
+**Description:** Optimises a counterfactual directly in input space with Adam, under a four-term loss balancing validity, proximity, sparsity, and a differentiable Soft-DTW plausibility term that pulls the candidate toward its `k` nearest target-class training series — encouraging a realistic temporal *shape* (via DTW's elastic alignment) rather than only matching values timestep-by-timestep, as an L1/L2 proximity term alone would. Soft-DTW replaces the path-selecting `min` in the DTW recursion with a soft-min, `-gamma * log(sum(exp(-r / gamma)))`, making the whole alignment cost differentiable and usable as a genuine gradient-descent loss term rather than only a post-hoc distance metric.
+
+**Key Features:**
+- **Soft-DTW as a loss, not just a metric**: a custom autograd `Function` implementing the Soft-DTW forward/backward recursions (ported from `github.com/Sleepwalking/pytorch-softdtw`, as vendored by the paper's own repository), so its gradient participates directly in every Adam step alongside the other three loss terms
+- **Target-class neighbor bank**: builds a per-class bank from the training set and selects the `k_neighbors` series closest to the query *from the target class* by Soft-DTW distance, fixed for the whole optimisation run
+- **Four-term objective**: `L_CF = L_prox + L_sparse + lambda * (L_valid + L_DTW)`, with a hinge (`max(0, tau - p(target_class|x_cf))`) or cross-entropy validity term
+- **Reproduction-verified**: ported line-by-line from the authors' own `dtw.py` / `soft_dtw_loss.py` / `solver.py`, and confirmed to reproduce the official `CounterfactualSolver` bit-for-bit (`max|cf_official - cf_ours| = 0.0`) given an identical classifier, training pool, and hyperparameters — see the comparison notebook below
+
+**Reference:**
+```bibtex
+@inproceedings{kostrzewa2026softdtwcfe,
+  title={Towards Plausibility in Time Series Counterfactual Explanations},
+  author={Kostrzewa, Marcin and Galus, Krzysztof and Zi\k{e}ba, Maciej},
+  booktitle={Asian Conference on Intelligent Information and Database Systems (ACIIDS)},
+  year={2026},
+  eprint={2603.08349},
+  archivePrefix={arXiv}
+}
+```
+
+**Links:**
+- Paper: [arXiv:2603.08349](https://arxiv.org/abs/2603.08349)
+- Repository: [https://github.com/genwro-ai/soft-dtw-counterfactual-explanations](https://github.com/genwro-ai/soft-dtw-counterfactual-explanations)
+- Docs: [https://genwro-ai.github.io/soft-dtw-counterfactual-explanations/](https://genwro-ai.github.io/soft-dtw-counterfactual-explanations/)
+- Comparison notebook: `cfts/cf_soft_dtw_cfe/soft_dtw_cfe_forda_comparison.ipynb` — runs the authors' own `CounterfactualSolver` (cloned from their repository) against the exact same classifier, training pool, and hyperparameters as this port. Because the optimisation is fully deterministic (no sampling or genetic operators, unlike DiffCF's diffusion sampling or CONFETTI's genetic search elsewhere in this library), the two implementations' outputs match to floating-point precision on every sample tested.
+
+**Usage Example:**
+```python
+from cfts.cf_soft_dtw_cfe.soft_dtw_cfe import soft_dtw_cfe_cf
+
+cf, prediction = soft_dtw_cfe_cf(
+    sample=sample,
+    model=model,
+    target_class=1,
+    dataset=dataset,     # required — builds the target-class Soft-DTW neighbor bank
+    steps=500,
+    k_neighbors=5,
+    lambda_validity=10.0,
+)
+```
+
+---
+
 ### Evolutionary Methods
 
 #### 5. MOC/DANDL - Multi-Objective Counterfactuals (2020)
@@ -2305,7 +2351,7 @@ cf, scores = diffcf_cf(
 
 ## Citation
 
-If you use this library in your research, please cite:
+If you use this library in your research, please cite one of the following sources (the second one is preferred):
 
 ```bibtex
 @software{cfts-us-2025,
@@ -2313,6 +2359,15 @@ If you use this library in your research, please cite:
   title = {Counterfactual Explanation Algorithms for Time Series Models},
   url = {https://github.com/visual-xai-for-time-series/counterfactual-explanations-for-time-series},
   year = {2025}
+}
+```
+
+```bibtex
+@inproceedings{schlegel_what-if_2026,
+  title={What-If Explanations Over Time: Counterfactuals for Time Series Classification},
+  author={Schlegel, Udo and Seidl, Thomas},
+  booktitle={World Conference on Explainable Artificial Intelligence (XAI)},
+  year={2026}
 }
 ```
 

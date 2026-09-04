@@ -48,9 +48,9 @@ python example_metrics_evaluation.py          # Comprehensive metrics
 
 ## Implemented Algorithms
 
-This library implements **35 state-of-the-art counterfactual explanation methods** for time series classification, organized into:
+This library implements **36 state-of-the-art counterfactual explanation methods** for time series classification, organized into:
 
-- **Optimization-Based Methods**: Wachter, COMTE, TSCF, TS-Tweaking, FFT-CF, TopGrad-CF
+- **Optimization-Based Methods**: Wachter, COMTE, TSCF, TS-Tweaking, FFT-CF, TopGrad-CF, Soft-DTW-CFE
 - **Evolutionary Methods**: MOC/DANDL, TSEvo, Multi-SpaCE, Sub-SpaCE, CONFETTI, FastPACE
 - **Instance-Based Methods**: Native Guide, CELS/M-CELS, AB-CF, IMFACT
 - **Latent Space Methods**: CGM, CounTS, Latent-CF, LASTS, GLACIER
@@ -245,6 +245,7 @@ counterfactual-explanations-for-time-series/
 │   ├── cf_native_guide/          # Native Guide implementation
 │   ├── cf_sets/                  # SETS implementation
 │   ├── cf_sg_cf/                 # SG-CF implementation
+│   ├── cf_soft_dtw_cfe/          # Soft-DTW-CFE implementation
 │   ├── cf_sparce/                # SpArCE implementation
 │   ├── cf_subspace/              # Sub-SpaCE implementation
 │   ├── cf_terce/                 # TERCE implementation

@@ -4,7 +4,10 @@ Arabic Digits Counterfactual Explanations Example
 This example demonstrates counterfactual explanation generation for the SpokenArabicDigits dataset
 using two representative methods from each category (Optimization-Based: Wachter, COMTE;
 Evolutionary: TSEvo, Sub-SpaCE; Instance-Based: Native Guide, CELS; Latent Space: GLACIER,
-Latent-CF; Segment-Based: SETS, TS-CEM; Hybrid: TeRCE, MG-CF) with enhanced visualization.
+Latent-CF; Segment-Based: SETS, TS-CEM; Hybrid: TeRCE, MG-CF), plus Soft-DTW-CFE
+(Plausibility-Based: gradient optimization in input space with a differentiable Soft-DTW
+term pulling the counterfactual toward its nearest target-class training series), with
+enhanced visualization.
 
 Features:
 - Multi-channel time series support (13 channels, 65 timesteps)
@@ -73,7 +76,7 @@ import cfts.cf_latent_cf.latent_cf as latent_cf
 import cfts.cf_cels.cels as cels
 import cfts.cf_terce.terce as terce
 import cfts.cf_cem.cem as cem
-
+from cfts.cf_soft_dtw_cfe.soft_dtw_cfe import soft_dtw_cfe_cf
 
 # Fixed seed so the query instance selected below (np.random.randint /
 # np.random.choice) is the same on every run, across all example_*.py
@@ -277,6 +280,7 @@ timing_results = {}
 methods = [
     'Native Guide', 'COMTE', 'SETS', 'Wachter Genetic', 'GLACIER',
     'Sub-SpaCE', 'TSEvo', 'MG-CF', 'Latent-CF', 'M-CELS', 'TERCE', 'CEM',
+    'Soft-DTW-CFE',
 ]
 
 # Initialize progress bar
@@ -476,6 +480,26 @@ except Exception as e:
     print(f'CEM failed: {type(e).__name__}: {str(e)[:100]}')
 progress.update(1)
 
+print('Start with Soft-DTW-CFE')
+start_time = time.time()
+try:
+    # steps reduced from the default 500 (paper setting) to keep this demo's
+    # runtime comparable to the other iterative methods above.
+    cf_soft_dtw_cfe, prediction_soft_dtw_cfe = soft_dtw_cfe_cf(
+        sample, model,
+        target_class=target_class,
+        dataset=dataset_test,
+        steps=150,
+        verbose=False,
+    )
+    timing_results['Soft-DTW-CFE'] = time.time() - start_time
+    print(f'Soft-DTW-CFE completed in {timing_results["Soft-DTW-CFE"]:.3f} seconds')
+except Exception as e:
+    cf_soft_dtw_cfe, prediction_soft_dtw_cfe = None, None
+    timing_results['Soft-DTW-CFE'] = time.time() - start_time
+    print(f'Soft-DTW-CFE failed: {type(e).__name__}: {str(e)[:100]}')
+progress.update(1)
+
 # Close the progress bar
 progress.close()
 
@@ -508,6 +532,7 @@ print(format_combined_result('Latent-CF', prediction_latent_cf, timing_results['
 print(format_combined_result('M-CELS', prediction_cels, timing_results['M-CELS']))
 print(format_combined_result('TERCE', prediction_terce, timing_results['TERCE']))
 print(format_combined_result('CEM', prediction_cem, timing_results['CEM']))
+print(format_combined_result('Soft-DTW-CFE', prediction_soft_dtw_cfe, timing_results['Soft-DTW-CFE']))
 print('='*80)
 print()
 
@@ -589,7 +614,8 @@ def create_enhanced_visualization(sample, label, original_pred_np, original_clas
         'SPARCE': '#AF7AC5',  # Lavender
         'CEM': '#2ECC71',  # Emerald Green
         'TS-Tweaking': '#E74C3C',  # Alizarin Red
-        'Abstract': '#BDC3C7'  # Silver
+        'Abstract': '#BDC3C7',  # Silver
+        'Soft-DTW-CFE': '#117A65'  # Dark Teal
     }
     
     # Create figure with subplots for each channel
@@ -683,6 +709,7 @@ cf_results_all = {
     'M-CELS': (cf_cels, prediction_cels),
     'TERCE': (cf_terce, prediction_terce),
     'CEM': (cf_cem, prediction_cem),
+    'Soft-DTW-CFE': (cf_soft_dtw_cfe, prediction_soft_dtw_cfe),
 }
 
 def _achieved_target(pred, target):
