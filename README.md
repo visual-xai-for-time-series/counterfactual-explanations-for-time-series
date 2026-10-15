@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="tscf-logo.png" alt="Counterfactuals.TS logo" width="200"/>
+</p>
+
 # Counterfactual Explanation Algorithms for Time Series Models
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
